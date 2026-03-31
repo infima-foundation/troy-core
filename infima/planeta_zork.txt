@@ -1,0 +1,15 @@
+# El Planeta Zork
+
+El Planeta Zork es un planeta ficticio ubicado en la galaxia Tremola.
+Tiene tres lunas: Luna Roja, Luna Azul y Luna Verde.
+
+Sus habitantes se llaman Zorkianos y tienen exactamente cuatro dedos en cada mano.
+La temperatura promedio en Zork es de 42 grados Celsius todo el año.
+
+El líder de Zork se llama Capitán Vrex y gobierna desde el año 3042.
+La moneda oficial de Zork es el Zorkel.
+
+Los Zorkianos se alimentan exclusivamente de cristales de cuarzo morado.
+El animal más popular en Zork es el Flurbo, una criatura con seis patas y alas doradas.
+
+La capital de Zork se llama Ciudad Nex y tiene una población de 4 millones de Zorkianos.

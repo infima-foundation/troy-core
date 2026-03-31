@@ -1,5 +1,5 @@
 # ─────────────────────────────────────────────────
-# TROY Core — v0.1.0
+# TROY Core — v0.1.4
 # Infima Foundation A.C.
 # Agente Personal Soberano
 # ─────────────────────────────────────────────────
@@ -14,12 +14,13 @@ import langdetect
 import sys, os
 sys.path.insert(0, os.path.dirname(__file__))
 from memoria import guardar_mensaje, obtener_historial, listar_sesiones
+from rag import buscar_contexto
 
 ollama_client = Client(host='http://localhost:11434')
 
 app = FastAPI(
     title="TROY Core",
-    version="0.1.0",
+    version="0.1.4",
     description="Agente Personal Soberano — Infima Foundation"
 )
 
@@ -83,7 +84,7 @@ class RespuestaTROY(BaseModel):
 def raiz():
     return {
         "nombre": "TROY Core",
-        "version": "0.1.0",
+        "version": "0.1.4",
         "estado": "activo",
         "sistema": platform.system(),
         "timestamp": datetime.now().isoformat()
@@ -103,29 +104,36 @@ def estado():
 @app.post("/chat", response_model=RespuestaTROY)
 def chat(mensaje: MensajeEntrada):
     recursos = evaluar_recursos()
-
     idioma = detectar_idioma(mensaje.texto)
 
     historial = obtener_historial(mensaje.sesion_id)
     guardar_mensaje(mensaje.sesion_id, "user", mensaje.texto)
 
-    mensajes = [
-        {
-            "role": "system",
-            "content": (
-                "You are TROY, a personal sovereign agent built by Infima Foundation. "
-                "Your personality is warm, direct, and natural — like a trusted collaborator, not a robot. "
-                f"IMPORTANT: The user is writing in {idioma}. You MUST respond in {idioma}. No exceptions. "
-                "BEHAVIOR RULES: "
-                "1. Only use information the user has explicitly given you in this conversation. "
-                "2. Never invent names, data, organizations, or context. "
-                "3. If you don't know something, ask naturally and briefly. "
-                "4. Never say 'I don't have information about' — just ask or answer directly. "
-                "5. Keep responses short and precise. No filler. "
-                "6. Everything runs locally on the user's device. Their data never leaves their control."
-            )
-        }
-    ]
+    # Buscar contexto relevante en los documentos
+    contexto_docs = buscar_contexto(mensaje.texto)
+
+    # Construir el prompt del sistema
+    contenido_sistema = (
+        "You are TROY, a personal sovereign agent built by Infima Foundation. "
+        "Your personality is warm, direct, and natural — like a trusted collaborator, not a robot. "
+        f"IMPORTANT: The user is writing in {idioma}. You MUST respond in {idioma}. No exceptions. "
+        "BEHAVIOR RULES: "
+        "1. Only use information the user has explicitly given you in this conversation or in the documents below. "
+        "2. Never invent names, data, organizations, or context. "
+        "3. If you don't know something, ask naturally and briefly. "
+        "4. Never say 'I don't have information about' — just ask or answer directly. "
+        "5. Keep responses short and precise. No filler. "
+        "6. Everything runs locally on the user's device. Their data never leaves their control."
+    )
+
+    if contexto_docs:
+        contenido_sistema += (
+            f"\n\nRELEVANT DOCUMENTS:\n{contexto_docs}\n"
+            "Use the above document fragments to answer if relevant. "
+            "Cite which document you are referencing when you use it."
+        )
+
+    mensajes = [{"role": "system", "content": contenido_sistema}]
     mensajes.extend(historial)
     mensajes.append({"role": "user", "content": mensaje.texto})
 
