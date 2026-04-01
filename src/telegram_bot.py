@@ -1,7 +1,8 @@
 # ─────────────────────────────────────────────────
-# TROY — Conector de Telegram v0.6
+# TROY — Conector de Telegram v0.7
 # Infima Foundation A.C.
 # RAG + Web + Mensajería + Calendario + Email
+# + Resumen Diario Automático
 # ─────────────────────────────────────────────────
 
 import sys, os, re, asyncio
@@ -11,6 +12,8 @@ sys.path.insert(0, os.path.dirname(__file__))
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
 from dotenv import load_dotenv
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 from memoria import guardar_mensaje, obtener_historial
 from rag import buscar_contexto
 from busqueda import buscar_web, necesita_busqueda
@@ -27,6 +30,7 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 ollama_client = Client(host='http://localhost:11434')
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "8703220225")
 MODELO = "llama3.2"
 
 def detectar_idioma(texto: str) -> str:
@@ -135,12 +139,50 @@ def limpiar_titulo(titulo: str) -> str:
         resultado = re.sub(rf'\b{palabra}\b', '', resultado, flags=re.IGNORECASE).strip()
     return resultado.strip('"\'').strip()
 
+# ── RESUMEN DIARIO ───────────────────────────────
+
+async def enviar_resumen_diario(bot, chat_id: str):
+    try:
+        resumen = "🌅 *Buenos días, Mauricio*\n\n"
+
+        loop = asyncio.get_event_loop()
+        eventos = await loop.run_in_executor(None, lambda: obtener_eventos(dias=1))
+
+        if eventos:
+            resumen += "📅 *Tu agenda de hoy:*\n"
+            for e in eventos:
+                resumen += f"• {e['titulo']} — {e['inicio']}\n"
+        else:
+            resumen += "📅 No tienes eventos hoy.\n"
+
+        resumen += "\n¿En qué te puedo ayudar hoy?"
+
+        await bot.send_message(
+            chat_id=chat_id,
+            text=resumen,
+            parse_mode="Markdown"
+        )
+
+    except Exception as e:
+        print(f"Error enviando resumen diario: {e}")
+
+# ── RESPONDER ────────────────────────────────────
+
 async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto_usuario = update.message.text
     sesion_id = str(update.effective_user.id)
     idioma = detectar_idioma(texto_usuario)
 
     guardar_mensaje(sesion_id, "user", texto_usuario)
+
+    # ── Resumen diario manual ────────────────────
+    if any(s in texto_usuario.lower() for s in [
+        "resumen del día", "resumen de hoy", "daily summary",
+        "qué tengo hoy", "que tengo hoy", "resumen diario"
+    ]):
+        await update.message.reply_text("⏳ Preparando tu resumen...")
+        await enviar_resumen_diario(update.get_bot(), sesion_id)
+        return
 
     # ── Mensajería Telegram ──────────────────────
     envio = detectar_envio_mensaje(texto_usuario)
@@ -159,7 +201,8 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if accion_email == "leer":
         await update.message.reply_text("📧 Revisando tu correo...")
-        correos = obtener_correos(limite=5)
+        loop = asyncio.get_event_loop()
+        correos = await loop.run_in_executor(None, lambda: obtener_correos(limite=5))
         respuesta = formatear_correos(correos, idioma)
         guardar_mensaje(sesion_id, "assistant", respuesta)
         await update.message.reply_text(respuesta)
@@ -172,7 +215,8 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
             texto_usuario, tokens=15
         )
         query = lineas.get("QUERY", texto_usuario)
-        correos = buscar_correos(query, limite=3)
+        loop = asyncio.get_event_loop()
+        correos = await loop.run_in_executor(None, lambda: buscar_correos(query, limite=3))
         respuesta = formatear_correos(correos, idioma)
         guardar_mensaje(sesion_id, "assistant", respuesta)
         await update.message.reply_text(respuesta)
@@ -191,11 +235,11 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
             para   = lineas.get("PARA", "")
             asunto = lineas.get("ASUNTO", "Mensaje de TROY")
             cuerpo = lineas.get("CUERPO", "")
-
             if not para:
                 respuesta = "❌ No entendí el destinatario. Intenta: 'Manda un correo a juan@ejemplo.com sobre la reunión'"
             else:
-                exito = mandar_correo(para, asunto, cuerpo)
+                loop = asyncio.get_event_loop()
+                exito = await loop.run_in_executor(None, lambda: mandar_correo(para, asunto, cuerpo))
                 respuesta = (f"✅ Correo enviado a {para}\n📌 Asunto: {asunto}"
                             if exito else "❌ No pude mandar el correo.")
         except Exception:
@@ -209,7 +253,8 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if accion == "consultar":
         await update.message.reply_text("📅 Revisando tu calendario...")
-        eventos = obtener_eventos(dias=7)
+        loop = asyncio.get_event_loop()
+        eventos = await loop.run_in_executor(None, lambda: obtener_eventos(dias=7))
         respuesta = formatear_eventos(eventos, idioma)
         guardar_mensaje(sesion_id, "assistant", respuesta)
         await update.message.reply_text(respuesta)
@@ -228,7 +273,8 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
             fecha    = lineas.get("FECHA", datetime.now().strftime("%Y-%m-%d"))
             hora     = lineas.get("HORA", "09:00")
             duracion = int(lineas.get("DURACION", "1"))
-            exito = crear_evento(titulo, fecha, hora, duracion)
+            loop = asyncio.get_event_loop()
+            exito = await loop.run_in_executor(None, lambda: crear_evento(titulo, fecha, hora, duracion))
             respuesta = (f"✅ Evento creado:\n📅 {titulo}\n🗓 {fecha} a las {hora}"
                         if exito else "❌ No pude crear el evento.")
         except Exception:
@@ -248,7 +294,8 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
                               else limpiar_titulo(extraer_con_llm(
                                   "Extract ONLY the event name to delete. Reply ONLY:\nTITULO: name",
                                   texto_usuario, tokens=15).get("TITULO", "")))
-            exito = borrar_evento(titulo_busqueda)
+            loop = asyncio.get_event_loop()
+            exito = await loop.run_in_executor(None, lambda: borrar_evento(titulo_busqueda))
             respuesta = (f"✅ Evento '{titulo_busqueda}' borrado."
                         if exito else f"❌ No encontré un evento llamado '{titulo_busqueda}'.")
         except Exception:
@@ -267,12 +314,13 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "FECHA: YYYY-MM-DD or empty\nHORA: HH:MM or empty",
                 texto_usuario, tokens=60
             )
-            exito = editar_evento(
+            loop = asyncio.get_event_loop()
+            exito = await loop.run_in_executor(None, lambda: editar_evento(
                 lineas.get("BUSCAR", ""),
                 lineas.get("TITULO") or None,
                 lineas.get("FECHA") or None,
                 lineas.get("HORA") or None
-            )
+            ))
             respuesta = ("✅ Evento actualizado." if exito
                         else f"❌ No encontré el evento '{lineas.get('BUSCAR', '')}'.")
         except Exception:
@@ -290,11 +338,12 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "TITULO: task title\nDESCRIPCION: description or empty\nFECHA: YYYY-MM-DD or empty",
                 texto_usuario, tokens=60
             )
-            exito = crear_tarea(
+            loop = asyncio.get_event_loop()
+            exito = await loop.run_in_executor(None, lambda: crear_tarea(
                 lineas.get("TITULO", "Nueva tarea"),
                 lineas.get("DESCRIPCION", ""),
                 lineas.get("FECHA") or None
-            )
+            ))
             respuesta = (f"✅ Tarea creada: {lineas.get('TITULO', 'Nueva tarea')}"
                         if exito else "❌ No pude crear la tarea.")
         except Exception:
@@ -305,7 +354,9 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif accion == "ver_tareas":
         await update.message.reply_text("📋 Revisando tus tareas...")
-        respuesta = formatear_tareas(obtener_tareas(), idioma)
+        loop = asyncio.get_event_loop()
+        tareas = await loop.run_in_executor(None, obtener_tareas)
+        respuesta = formatear_tareas(tareas, idioma)
         guardar_mensaje(sesion_id, "assistant", respuesta)
         await update.message.reply_text(respuesta)
         return
@@ -351,10 +402,27 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     guardar_mensaje(sesion_id, "assistant", texto_respuesta)
     await update.message.reply_text(texto_respuesta)
 
+# ── INICIAR BOT ──────────────────────────────────
+
 def iniciar_bot():
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, responder))
-    print("TROY Bot activo — RAG + Web + Mensajería + Calendario + Email...")
+
+    async def post_init(application):
+        scheduler = AsyncIOScheduler()
+        scheduler.add_job(
+            enviar_resumen_diario,
+            CronTrigger(hour=8, minute=0),
+            args=[application.bot, CHAT_ID],
+            id="resumen_diario",
+            replace_existing=True
+        )
+        scheduler.start()
+        print(f"📅 Resumen diario programado para las 8:00am → {CHAT_ID}")
+
+    app.post_init = post_init
+
+    print("TROY Bot activo — RAG + Web + Mensajería + Calendario + Email + Resumen Diario...")
     app.run_polling()
 
 if __name__ == "__main__":
