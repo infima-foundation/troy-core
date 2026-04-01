@@ -1,7 +1,7 @@
 # ─────────────────────────────────────────────────
-# TROY — Conector de Telegram v0.5
+# TROY — Conector de Telegram v0.6
 # Infima Foundation A.C.
-# RAG + Web + Mensajería + Calendario Completo
+# RAG + Web + Mensajería + Calendario + Email
 # ─────────────────────────────────────────────────
 
 import sys, os, re, asyncio
@@ -18,6 +18,8 @@ from telegram_usuario import mandar_mensaje
 from calendario import (obtener_eventos, crear_evento, editar_evento,
                         borrar_evento, crear_tarea, obtener_tareas,
                         formatear_eventos, formatear_tareas)
+from email_agent import (obtener_correos, buscar_correos,
+                         mandar_correo, formatear_correos)
 from ollama import Client
 import langdetect
 
@@ -85,6 +87,27 @@ def detectar_consulta_calendario(texto: str) -> str:
         return "consultar"
     return None
 
+def detectar_accion_email(texto: str) -> str:
+    texto_lower = texto.lower()
+    if any(s in texto_lower for s in [
+        "manda un correo", "envía un correo", "escríbele un correo",
+        "manda correo", "envía correo", "send email", "send an email",
+        "manda email", "envía email", "write an email"
+    ]):
+        return "mandar"
+    elif any(s in texto_lower for s in [
+        "busca correo", "busca en mi correo", "search email",
+        "correos de", "emails from", "busca en correo"
+    ]):
+        return "buscar"
+    elif any(s in texto_lower for s in [
+        "correos", "emails", "inbox", "bandeja",
+        "mensajes nuevos", "qué correos", "que correos",
+        "revisa mi correo", "check my email", "check email"
+    ]):
+        return "leer"
+    return None
+
 def extraer_con_llm(prompt_sistema: str, texto_usuario: str, tokens: int = 60) -> dict:
     resp = ollama_client.chat(
         model=MODELO,
@@ -103,7 +126,6 @@ def extraer_con_llm(prompt_sistema: str, texto_usuario: str, tokens: int = 60) -
     return lineas
 
 def limpiar_titulo(titulo: str) -> str:
-    """Limpia palabras extra que el LLM pueda agregar al título."""
     palabras_extra = [
         "eliminado", "borrado", "cancelado", "deleted", "removed",
         "cancelled", "event", "evento", "the", "el", "la"
@@ -120,7 +142,7 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     guardar_mensaje(sesion_id, "user", texto_usuario)
 
-    # ── Mensajería ───────────────────────────────
+    # ── Mensajería Telegram ──────────────────────
     envio = detectar_envio_mensaje(texto_usuario)
     if envio:
         destinatario, mensaje_a_enviar = envio
@@ -128,6 +150,56 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
         exito = await mandar_mensaje(destinatario, mensaje_a_enviar)
         respuesta = (f"✅ Mensaje enviado a {destinatario}: '{mensaje_a_enviar}'"
                      if exito else f"❌ No pude mandar el mensaje a {destinatario}.")
+        guardar_mensaje(sesion_id, "assistant", respuesta)
+        await update.message.reply_text(respuesta)
+        return
+
+    # ── Email ────────────────────────────────────
+    accion_email = detectar_accion_email(texto_usuario)
+
+    if accion_email == "leer":
+        await update.message.reply_text("📧 Revisando tu correo...")
+        correos = obtener_correos(limite=5)
+        respuesta = formatear_correos(correos, idioma)
+        guardar_mensaje(sesion_id, "assistant", respuesta)
+        await update.message.reply_text(respuesta)
+        return
+
+    elif accion_email == "buscar":
+        await update.message.reply_text("🔍 Buscando en tu correo...")
+        lineas = extraer_con_llm(
+            "Extract the search query for email. Reply ONLY:\nQUERY: search term",
+            texto_usuario, tokens=15
+        )
+        query = lineas.get("QUERY", texto_usuario)
+        correos = buscar_correos(query, limite=3)
+        respuesta = formatear_correos(correos, idioma)
+        guardar_mensaje(sesion_id, "assistant", respuesta)
+        await update.message.reply_text(respuesta)
+        return
+
+    elif accion_email == "mandar":
+        await update.message.reply_text("📧 Preparando el correo...")
+        try:
+            lineas = extraer_con_llm(
+                "Extract email details. Reply ONLY:\n"
+                "PARA: email@address.com\n"
+                "ASUNTO: subject\n"
+                "CUERPO: email body",
+                texto_usuario, tokens=80
+            )
+            para   = lineas.get("PARA", "")
+            asunto = lineas.get("ASUNTO", "Mensaje de TROY")
+            cuerpo = lineas.get("CUERPO", "")
+
+            if not para:
+                respuesta = "❌ No entendí el destinatario. Intenta: 'Manda un correo a juan@ejemplo.com sobre la reunión'"
+            else:
+                exito = mandar_correo(para, asunto, cuerpo)
+                respuesta = (f"✅ Correo enviado a {para}\n📌 Asunto: {asunto}"
+                            if exito else "❌ No pude mandar el correo.")
+        except Exception:
+            respuesta = "❌ No entendí los detalles del correo."
         guardar_mensaje(sesion_id, "assistant", respuesta)
         await update.message.reply_text(respuesta)
         return
@@ -168,26 +240,18 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif accion == "borrar":
         await update.message.reply_text("🗑 Buscando el evento para borrar...")
         try:
-            # Extracción directa con regex primero — más confiable que el LLM
-            # Busca patrones como "borra X", "elimina X", "cancela X"
             match = re.search(
                 r"(?:borra|elimina|cancela|delete|remove|cancel)\s+(?:el\s+evento\s+)?[\"']?(.+?)[\"']?\s*$",
                 texto_usuario.lower()
             )
-            if match:
-                titulo_busqueda = match.group(1).strip().strip('"\'')
-            else:
-                lineas = extraer_con_llm(
-                    "Extract ONLY the event name to delete. "
-                    "Reply with just the name, nothing else:\nTITULO: name",
-                    texto_usuario, tokens=15
-                )
-                titulo_busqueda = limpiar_titulo(lineas.get("TITULO", ""))
-
+            titulo_busqueda = (match.group(1).strip().strip('"\'') if match
+                              else limpiar_titulo(extraer_con_llm(
+                                  "Extract ONLY the event name to delete. Reply ONLY:\nTITULO: name",
+                                  texto_usuario, tokens=15).get("TITULO", "")))
             exito = borrar_evento(titulo_busqueda)
             respuesta = (f"✅ Evento '{titulo_busqueda}' borrado."
                         if exito else f"❌ No encontré un evento llamado '{titulo_busqueda}'.")
-        except Exception as e:
+        except Exception:
             respuesta = "❌ No pude procesar la solicitud."
         guardar_mensaje(sesion_id, "assistant", respuesta)
         await update.message.reply_text(respuesta)
@@ -203,13 +267,14 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "FECHA: YYYY-MM-DD or empty\nHORA: HH:MM or empty",
                 texto_usuario, tokens=60
             )
-            buscar       = lineas.get("BUSCAR", "")
-            nuevo_titulo = lineas.get("TITULO") or None
-            nueva_fecha  = lineas.get("FECHA") or None
-            nueva_hora   = lineas.get("HORA") or None
-            exito = editar_evento(buscar, nuevo_titulo, nueva_fecha, nueva_hora)
-            respuesta = ("✅ Evento actualizado."
-                        if exito else f"❌ No encontré el evento '{buscar}'.")
+            exito = editar_evento(
+                lineas.get("BUSCAR", ""),
+                lineas.get("TITULO") or None,
+                lineas.get("FECHA") or None,
+                lineas.get("HORA") or None
+            )
+            respuesta = ("✅ Evento actualizado." if exito
+                        else f"❌ No encontré el evento '{lineas.get('BUSCAR', '')}'.")
         except Exception:
             respuesta = "❌ No pude procesar la edición."
         guardar_mensaje(sesion_id, "assistant", respuesta)
@@ -225,11 +290,12 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "TITULO: task title\nDESCRIPCION: description or empty\nFECHA: YYYY-MM-DD or empty",
                 texto_usuario, tokens=60
             )
-            titulo      = lineas.get("TITULO", "Nueva tarea")
-            descripcion = lineas.get("DESCRIPCION", "")
-            fecha       = lineas.get("FECHA") or None
-            exito = crear_tarea(titulo, descripcion, fecha)
-            respuesta = (f"✅ Tarea creada: {titulo}"
+            exito = crear_tarea(
+                lineas.get("TITULO", "Nueva tarea"),
+                lineas.get("DESCRIPCION", ""),
+                lineas.get("FECHA") or None
+            )
+            respuesta = (f"✅ Tarea creada: {lineas.get('TITULO', 'Nueva tarea')}"
                         if exito else "❌ No pude crear la tarea.")
         except Exception:
             respuesta = "❌ No pude procesar la tarea."
@@ -239,8 +305,7 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif accion == "ver_tareas":
         await update.message.reply_text("📋 Revisando tus tareas...")
-        tareas = obtener_tareas()
-        respuesta = formatear_tareas(tareas, idioma)
+        respuesta = formatear_tareas(obtener_tareas(), idioma)
         guardar_mensaje(sesion_id, "assistant", respuesta)
         await update.message.reply_text(respuesta)
         return
@@ -289,7 +354,7 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def iniciar_bot():
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, responder))
-    print("TROY Bot activo — RAG + Web + Mensajería + Calendario Completo...")
+    print("TROY Bot activo — RAG + Web + Mensajería + Calendario + Email...")
     app.run_polling()
 
 if __name__ == "__main__":
