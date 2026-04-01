@@ -1,7 +1,7 @@
 # ─────────────────────────────────────────────────
-# TROY — Conector de Telegram v0.4
+# TROY — Conector de Telegram v0.5
 # Infima Foundation A.C.
-# Con RAG + Búsqueda Web + Mensajería + Calendario
+# RAG + Web + Mensajería + Calendario Completo
 # ─────────────────────────────────────────────────
 
 import sys, os, re, asyncio
@@ -15,7 +15,9 @@ from memoria import guardar_mensaje, obtener_historial
 from rag import buscar_contexto
 from busqueda import buscar_web, necesita_busqueda
 from telegram_usuario import mandar_mensaje
-from calendario import obtener_eventos, crear_evento, formatear_eventos
+from calendario import (obtener_eventos, crear_evento, editar_evento,
+                        borrar_evento, crear_tarea, obtener_tareas,
+                        formatear_eventos, formatear_tareas)
 from ollama import Client
 import langdetect
 
@@ -57,24 +59,59 @@ def detectar_envio_mensaje(texto: str):
 
 def detectar_consulta_calendario(texto: str) -> str:
     texto_lower = texto.lower()
-    señales_creacion = [
-        "agrega", "añade", "crea un evento", "programa",
-        "pon en mi calendario", "add to calendar",
-        "create event", "schedule a meeting", "nueva cita",
-        "nuevo evento", "crea evento", "crea un"
-    ]
-    señales_consulta = [
-        "agenda", "calendario", "calendar", "eventos",
-        "qué tengo", "que tengo", "what do i have",
-        "citas", "reuniones", "meetings", "schedule",
-        "esta semana", "this week", "hoy", "today",
-        "mañana", "tomorrow", "próximos", "upcoming"
-    ]
-    if any(s in texto_lower for s in señales_creacion):
+    if any(s in texto_lower for s in [
+        "borra", "elimina", "cancela", "delete", "remove", "cancel"
+    ]):
+        return "borrar"
+    elif any(s in texto_lower for s in [
+        "edita", "cambia", "modifica", "mueve", "edit", "change", "move", "update", "actualiza"
+    ]):
+        return "editar"
+    elif any(s in texto_lower for s in ["tarea", "task", "to-do", "todo", "pendiente"]):
+        if any(s in texto_lower for s in ["crea", "agrega", "añade", "add", "nueva"]):
+            return "crear_tarea"
+        return "ver_tareas"
+    elif any(s in texto_lower for s in [
+        "agrega", "añade", "crea", "programa", "nuevo evento",
+        "nueva cita", "add event", "create event", "schedule", "crea un"
+    ]):
         return "crear"
-    elif any(s in texto_lower for s in señales_consulta):
+    elif any(s in texto_lower for s in [
+        "agenda", "calendario", "calendar", "eventos", "qué tengo",
+        "que tengo", "what do i have", "citas", "reuniones", "meetings",
+        "esta semana", "this week", "hoy", "today", "mañana", "tomorrow",
+        "próximos", "upcoming"
+    ]):
         return "consultar"
     return None
+
+def extraer_con_llm(prompt_sistema: str, texto_usuario: str, tokens: int = 60) -> dict:
+    resp = ollama_client.chat(
+        model=MODELO,
+        messages=[
+            {"role": "system", "content": prompt_sistema},
+            {"role": "user", "content": texto_usuario}
+        ],
+        options={"num_predict": tokens}
+    )
+    texto = resp.message.content if hasattr(resp, "message") else resp["message"]["content"]
+    lineas = {}
+    for linea in texto.strip().split("\n"):
+        if ":" in linea:
+            k, v = linea.split(":", 1)
+            lineas[k.strip().upper()] = v.strip()
+    return lineas
+
+def limpiar_titulo(titulo: str) -> str:
+    """Limpia palabras extra que el LLM pueda agregar al título."""
+    palabras_extra = [
+        "eliminado", "borrado", "cancelado", "deleted", "removed",
+        "cancelled", "event", "evento", "the", "el", "la"
+    ]
+    resultado = titulo.strip().strip('"\'')
+    for palabra in palabras_extra:
+        resultado = re.sub(rf'\b{palabra}\b', '', resultado, flags=re.IGNORECASE).strip()
+    return resultado.strip('"\'').strip()
 
 async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto_usuario = update.message.text
@@ -83,23 +120,22 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     guardar_mensaje(sesion_id, "user", texto_usuario)
 
-    # Detectar si quiere mandar un mensaje
+    # ── Mensajería ───────────────────────────────
     envio = detectar_envio_mensaje(texto_usuario)
     if envio:
         destinatario, mensaje_a_enviar = envio
         await update.message.reply_text(f"📤 Mandando mensaje a {destinatario}...")
         exito = await mandar_mensaje(destinatario, mensaje_a_enviar)
-        if exito:
-            respuesta = f"✅ Mensaje enviado a {destinatario}: '{mensaje_a_enviar}'"
-        else:
-            respuesta = f"❌ No pude mandar el mensaje a {destinatario}."
+        respuesta = (f"✅ Mensaje enviado a {destinatario}: '{mensaje_a_enviar}'"
+                     if exito else f"❌ No pude mandar el mensaje a {destinatario}.")
         guardar_mensaje(sesion_id, "assistant", respuesta)
         await update.message.reply_text(respuesta)
         return
 
-    # Detectar consulta de calendario
-    accion_calendario = detectar_consulta_calendario(texto_usuario)
-    if accion_calendario == "consultar":
+    # ── Calendario ───────────────────────────────
+    accion = detectar_consulta_calendario(texto_usuario)
+
+    if accion == "consultar":
         await update.message.reply_text("📅 Revisando tu calendario...")
         eventos = obtener_eventos(dias=7)
         respuesta = formatear_eventos(eventos, idioma)
@@ -107,58 +143,109 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(respuesta)
         return
 
-    elif accion_calendario == "crear":
+    elif accion == "crear":
         await update.message.reply_text("📅 Procesando el evento...")
-
-        mensajes_extraccion = [
-            {
-                "role": "system",
-                "content": (
-                    f"Today is {datetime.now().strftime('%Y-%m-%d')}. "
-                    "Extract event info from the message. "
-                    "Reply ONLY in this exact format with no extra text:\n"
-                    "TITULO: title here\n"
-                    "FECHA: YYYY-MM-DD\n"
-                    "HORA: HH:MM\n"
-                    "DURACION: 1"
-                )
-            },
-            {"role": "user", "content": texto_usuario}
-        ]
-
         try:
-            resp = ollama_client.chat(
-                model=MODELO,
-                messages=mensajes_extraccion,
-                options={"num_predict": 50}
+            lineas = extraer_con_llm(
+                f"Today is {datetime.now().strftime('%Y-%m-%d')}. "
+                "Extract event info. Reply ONLY:\n"
+                "TITULO: title\nFECHA: YYYY-MM-DD\nHORA: HH:MM\nDURACION: 1",
+                texto_usuario, tokens=50
             )
-            texto_ext = resp.message.content if hasattr(resp, "message") else resp["message"]["content"]
-
-            lineas = {}
-            for linea in texto_ext.strip().split("\n"):
-                if ":" in linea:
-                    clave, valor = linea.split(":", 1)
-                    lineas[clave.strip().upper()] = valor.strip()
-
             titulo   = lineas.get("TITULO", "Nuevo evento")
             fecha    = lineas.get("FECHA", datetime.now().strftime("%Y-%m-%d"))
             hora     = lineas.get("HORA", "09:00")
             duracion = int(lineas.get("DURACION", "1"))
-
             exito = crear_evento(titulo, fecha, hora, duracion)
-
-            if exito:
-                respuesta = f"✅ Evento creado:\n📅 {titulo}\n🗓 {fecha} a las {hora}"
-            else:
-                respuesta = "❌ No pude crear el evento."
-
-        except Exception as e:
+            respuesta = (f"✅ Evento creado:\n📅 {titulo}\n🗓 {fecha} a las {hora}"
+                        if exito else "❌ No pude crear el evento.")
+        except Exception:
             respuesta = "❌ No entendí los detalles. Intenta: 'Crea un evento el 7 de abril a las 3pm llamado Reunión'"
-
         guardar_mensaje(sesion_id, "assistant", respuesta)
         await update.message.reply_text(respuesta)
         return
 
+    elif accion == "borrar":
+        await update.message.reply_text("🗑 Buscando el evento para borrar...")
+        try:
+            # Extracción directa con regex primero — más confiable que el LLM
+            # Busca patrones como "borra X", "elimina X", "cancela X"
+            match = re.search(
+                r"(?:borra|elimina|cancela|delete|remove|cancel)\s+(?:el\s+evento\s+)?[\"']?(.+?)[\"']?\s*$",
+                texto_usuario.lower()
+            )
+            if match:
+                titulo_busqueda = match.group(1).strip().strip('"\'')
+            else:
+                lineas = extraer_con_llm(
+                    "Extract ONLY the event name to delete. "
+                    "Reply with just the name, nothing else:\nTITULO: name",
+                    texto_usuario, tokens=15
+                )
+                titulo_busqueda = limpiar_titulo(lineas.get("TITULO", ""))
+
+            exito = borrar_evento(titulo_busqueda)
+            respuesta = (f"✅ Evento '{titulo_busqueda}' borrado."
+                        if exito else f"❌ No encontré un evento llamado '{titulo_busqueda}'.")
+        except Exception as e:
+            respuesta = "❌ No pude procesar la solicitud."
+        guardar_mensaje(sesion_id, "assistant", respuesta)
+        await update.message.reply_text(respuesta)
+        return
+
+    elif accion == "editar":
+        await update.message.reply_text("✏️ Procesando edición...")
+        try:
+            lineas = extraer_con_llm(
+                f"Today is {datetime.now().strftime('%Y-%m-%d')}. "
+                "Extract edit info. Reply ONLY:\n"
+                "BUSCAR: original title\nTITULO: new title or empty\n"
+                "FECHA: YYYY-MM-DD or empty\nHORA: HH:MM or empty",
+                texto_usuario, tokens=60
+            )
+            buscar       = lineas.get("BUSCAR", "")
+            nuevo_titulo = lineas.get("TITULO") or None
+            nueva_fecha  = lineas.get("FECHA") or None
+            nueva_hora   = lineas.get("HORA") or None
+            exito = editar_evento(buscar, nuevo_titulo, nueva_fecha, nueva_hora)
+            respuesta = ("✅ Evento actualizado."
+                        if exito else f"❌ No encontré el evento '{buscar}'.")
+        except Exception:
+            respuesta = "❌ No pude procesar la edición."
+        guardar_mensaje(sesion_id, "assistant", respuesta)
+        await update.message.reply_text(respuesta)
+        return
+
+    elif accion == "crear_tarea":
+        await update.message.reply_text("📝 Creando tarea...")
+        try:
+            lineas = extraer_con_llm(
+                f"Today is {datetime.now().strftime('%Y-%m-%d')}. "
+                "Extract task info. Reply ONLY:\n"
+                "TITULO: task title\nDESCRIPCION: description or empty\nFECHA: YYYY-MM-DD or empty",
+                texto_usuario, tokens=60
+            )
+            titulo      = lineas.get("TITULO", "Nueva tarea")
+            descripcion = lineas.get("DESCRIPCION", "")
+            fecha       = lineas.get("FECHA") or None
+            exito = crear_tarea(titulo, descripcion, fecha)
+            respuesta = (f"✅ Tarea creada: {titulo}"
+                        if exito else "❌ No pude crear la tarea.")
+        except Exception:
+            respuesta = "❌ No pude procesar la tarea."
+        guardar_mensaje(sesion_id, "assistant", respuesta)
+        await update.message.reply_text(respuesta)
+        return
+
+    elif accion == "ver_tareas":
+        await update.message.reply_text("📋 Revisando tus tareas...")
+        tareas = obtener_tareas()
+        respuesta = formatear_tareas(tareas, idioma)
+        guardar_mensaje(sesion_id, "assistant", respuesta)
+        await update.message.reply_text(respuesta)
+        return
+
+    # ── Conversación general ─────────────────────
     historial = obtener_historial(sesion_id)
     contexto_docs = buscar_contexto(texto_usuario)
 
@@ -181,7 +268,6 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if contexto_docs:
         contenido_sistema += f"\n\nDOCUMENT CONTEXT:\n{contexto_docs}\n"
-
     if contexto_web:
         contenido_sistema += (
             f"\n\nWEB SEARCH RESULTS:\n{contexto_web}\n"
@@ -192,15 +278,10 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mensajes.extend(historial)
     mensajes.append({"role": "user", "content": texto_usuario})
 
-    respuesta_ollama = ollama_client.chat(
-        model=MODELO,
-        messages=mensajes
-    )
-
-    if hasattr(respuesta_ollama, "message"):
-        texto_respuesta = respuesta_ollama.message.content
-    else:
-        texto_respuesta = respuesta_ollama["message"]["content"]
+    respuesta_ollama = ollama_client.chat(model=MODELO, messages=mensajes)
+    texto_respuesta = (respuesta_ollama.message.content
+                      if hasattr(respuesta_ollama, "message")
+                      else respuesta_ollama["message"]["content"])
 
     guardar_mensaje(sesion_id, "assistant", texto_respuesta)
     await update.message.reply_text(texto_respuesta)
@@ -208,7 +289,7 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def iniciar_bot():
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, responder))
-    print("TROY Bot activo — RAG + Web + Mensajería + Calendario...")
+    print("TROY Bot activo — RAG + Web + Mensajería + Calendario Completo...")
     app.run_polling()
 
 if __name__ == "__main__":
