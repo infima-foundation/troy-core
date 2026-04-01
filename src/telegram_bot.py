@@ -115,12 +115,16 @@ def detectar_accion_email(texto: str) -> str:
 
 def detectar_browser_use(texto: str):
     texto_lower = texto.lower()
-    url_match = re.search(r'https?://\S+', texto)
+    # Detectar URLs con o sin https://
+    url_match = re.search(r'https?://\S+|www\.\S+\.\S+', texto)
     if url_match and any(s in texto_lower for s in [
         "abre", "navega", "entra a", "visita", "open", "go to", "browse",
-        "dime qué dice", "qué dice", "lee", "extrae"
+        "dime qué dice", "qué dice", "que dice", "lee", "extrae", "busca en"
     ]):
-        return "navegar", url_match.group(0)
+        url = url_match.group(0)
+        if not url.startswith("http"):
+            url = "https://" + url
+        return "navegar", url
     if any(s in texto_lower for s in [
         "busca en google", "search google",
         "encuentra en internet", "busca en la web"
@@ -214,7 +218,6 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"🌐 Navegando {parametro}...")
             loop = asyncio.get_event_loop()
             contenido = await loop.run_in_executor(None, lambda: navegar(parametro))
-            # Resumir con LLM
             mensajes_resumen = [
                 {
                     "role": "system",
