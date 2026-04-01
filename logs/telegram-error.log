@@ -350,3 +350,125 @@ embeddings.position_ids | UNEXPECTED |  |
 
 Notes:
 - UNEXPECTED:	can be ignored when loading from different task/architecture; not ok if you expect identical arch.
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Loading weights:   0%|          | 0/103 [00:00<?, ?it/s]Loading weights: 100%|██████████| 103/103 [00:00<00:00, 5370.43it/s]
+[1mBertModel LOAD REPORT[0m from: sentence-transformers/all-MiniLM-L6-v2
+Key                     | Status     |  | 
+------------------------+------------+--+-
+embeddings.position_ids | UNEXPECTED |  | 
+
+Notes:
+- UNEXPECTED:	can be ignored when loading from different task/architecture; not ok if you expect identical arch.
+Unexpected exception in the send loop
+Traceback (most recent call last):
+  File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/queues.py", line 186, in get
+    await getter
+GeneratorExit
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/mauriciovallartapena/troy-core/venv/lib/python3.14/site-packages/telethon/network/connection/connection.py", line 322, in _send_loop
+    self._send(await self._send_queue.get())
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/queues.py", line 188, in get
+    getter.cancel()  # Just in case getter is not done yet.
+    ~~~~~~~~~~~~~^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/base_events.py", line 827, in call_soon
+    self._check_closed()
+    ~~~~~~~~~~~~~~~~~~^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/base_events.py", line 550, in _check_closed
+    raise RuntimeError('Event loop is closed')
+RuntimeError: Event loop is closed
+Exception ignored while closing generator <coroutine object Connection._send_loop at 0x130874580>:
+RuntimeError: coroutine ignored GeneratorExit
+Task was destroyed but it is pending!
+task: <Task cancelling name='Task-50' coro=<Connection._send_loop() running at /Users/mauriciovallartapena/troy-core/venv/lib/python3.14/site-packages/telethon/network/connection/connection.py:332> wait_for=<Future cancelled>>
+Task was destroyed but it is pending!
+task: <Task pending name='Task-51' coro=<Connection._recv_loop() done, defined at /Users/mauriciovallartapena/troy-core/venv/lib/python3.14/site-packages/telethon/network/connection/connection.py:334> wait_for=<Future pending cb=[Task.task_wakeup()]>>
+Task was destroyed but it is pending!
+task: <Task pending name='Task-52' coro=<MTProtoSender._send_loop() done, defined at /Users/mauriciovallartapena/troy-core/venv/lib/python3.14/site-packages/telethon/network/mtprotosender.py:452> wait_for=<Future pending cb=[Task.task_wakeup()]>>
+Unhandled error while receiving data
+Traceback (most recent call last):
+  File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/queues.py", line 186, in get
+    await getter
+GeneratorExit
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/mauriciovallartapena/troy-core/venv/lib/python3.14/site-packages/telethon/network/mtprotosender.py", line 513, in _recv_loop
+    body = await self._connection.recv()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/mauriciovallartapena/troy-core/venv/lib/python3.14/site-packages/telethon/network/connection/connection.py", line 308, in recv
+    result, err = await self._recv_queue.get()
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/queues.py", line 188, in get
+    getter.cancel()  # Just in case getter is not done yet.
+    ~~~~~~~~~~~~~^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/base_events.py", line 827, in call_soon
+    self._check_closed()
+    ~~~~~~~~~~~~~~~~~~^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/base_events.py", line 550, in _check_closed
+    raise RuntimeError('Event loop is closed')
+RuntimeError: Event loop is closed
+Exception ignored while closing generator <coroutine object MTProtoSender._recv_loop at 0x1201d2140>:
+Traceback (most recent call last):
+  File "/Users/mauriciovallartapena/troy-core/venv/lib/python3.14/site-packages/telethon/network/mtprotosender.py", line 530, in _recv_loop
+    self._start_reconnect(e)
+  File "/Users/mauriciovallartapena/troy-core/venv/lib/python3.14/site-packages/telethon/network/mtprotosender.py", line 436, in _start_reconnect
+    helpers.get_running_loop().create_task(self._reconnect(error))
+  File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/base_events.py", line 466, in create_task
+    self._check_closed()
+  File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/base_events.py", line 550, in _check_closed
+    raise RuntimeError('Event loop is closed')
+RuntimeError: Event loop is closed
+<sys>:0: RuntimeWarning: coroutine 'MTProtoSender._reconnect' was never awaited
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+Task was destroyed but it is pending!
+task: <Task pending name='Task-53' coro=<MTProtoSender._recv_loop() done, defined at /Users/mauriciovallartapena/troy-core/venv/lib/python3.14/site-packages/telethon/network/mtprotosender.py:503> wait_for=<Future cancelled>>
+Fatal error handling updates (this is a bug in Telethon v1.42.0, please report it)
+Traceback (most recent call last):
+  File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/queues.py", line 186, in get
+    await getter
+GeneratorExit
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/mauriciovallartapena/troy-core/venv/lib/python3.14/site-packages/telethon/client/updates.py", line 454, in _update_loop
+    updates = await asyncio.wait_for(self._updates_queue.get(), deadline_delay)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py", line 488, in wait_for
+    return await fut
+           ^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/queues.py", line 188, in get
+    getter.cancel()  # Just in case getter is not done yet.
+    ~~~~~~~~~~~~~^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/base_events.py", line 827, in call_soon
+    self._check_closed()
+    ~~~~~~~~~~~~~~~~~~^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/base_events.py", line 550, in _check_closed
+    raise RuntimeError('Event loop is closed')
+RuntimeError: Event loop is closed
+/Users/mauriciovallartapena/troy-core/venv/lib/python3.14/site-packages/telethon/client/telegrambaseclient.py:663: RuntimeWarning: coroutine 'TelegramBaseClient._disconnect_coro' was never awaited
+  pass
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+Exception ignored while closing generator <coroutine object UpdateMethods._update_loop at 0x11fff90c0>:
+Traceback (most recent call last):
+  File "/Users/mauriciovallartapena/troy-core/venv/lib/python3.14/site-packages/telethon/client/updates.py", line 474, in _update_loop
+    await self.disconnect()
+TypeError: 'NoneType' object can't be awaited
+Task was destroyed but it is pending!
+task: <Task pending name='Task-54' coro=<UpdateMethods._update_loop() done, defined at /Users/mauriciovallartapena/troy-core/venv/lib/python3.14/site-packages/telethon/client/updates.py:258> wait_for=<Future cancelled>>
+Task was destroyed but it is pending!
+task: <Task pending name='Task-55' coro=<UpdateMethods._keepalive_loop() done, defined at /Users/mauriciovallartapena/troy-core/venv/lib/python3.14/site-packages/telethon/client/updates.py:485> wait_for=<Future pending cb=[shield.<locals>._outer_done_callback() at /opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py:991, Task.task_wakeup()]>>
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Loading weights:   0%|          | 0/103 [00:00<?, ?it/s]Loading weights: 100%|██████████| 103/103 [00:00<00:00, 6006.94it/s]
+[1mBertModel LOAD REPORT[0m from: sentence-transformers/all-MiniLM-L6-v2
+Key                     | Status     |  | 
+------------------------+------------+--+-
+embeddings.position_ids | UNEXPECTED |  | 
+
+Notes:
+- UNEXPECTED:	can be ignored when loading from different task/architecture; not ok if you expect identical arch.
