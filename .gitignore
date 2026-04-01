@@ -8,3 +8,5 @@ __pycache__/
 logs/
 .env
 .env
+*.session
+troy_rag_db/
