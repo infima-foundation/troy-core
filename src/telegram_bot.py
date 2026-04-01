@@ -1,10 +1,11 @@
 # ─────────────────────────────────────────────────
-# TROY — Conector de Telegram v0.3
+# TROY — Conector de Telegram v0.4
 # Infima Foundation A.C.
-# Con RAG + Búsqueda Web + Mensajería
+# Con RAG + Búsqueda Web + Mensajería + Calendario
 # ─────────────────────────────────────────────────
 
 import sys, os, re, asyncio
+from datetime import datetime
 sys.path.insert(0, os.path.dirname(__file__))
 
 from telegram import Update
@@ -14,6 +15,7 @@ from memoria import guardar_mensaje, obtener_historial
 from rag import buscar_contexto
 from busqueda import buscar_web, necesita_busqueda
 from telegram_usuario import mandar_mensaje
+from calendario import obtener_eventos, crear_evento, formatear_eventos
 from ollama import Client
 import langdetect
 
@@ -31,10 +33,6 @@ def detectar_idioma(texto: str) -> str:
         return "English"
 
 def detectar_envio_mensaje(texto: str):
-    """
-    Detecta si el usuario quiere mandar un mensaje.
-    Soporta @username y IDs numéricos.
-    """
     patrones = [
         r"mándale?\s+a\s+(@?[\w\d]+)\s+que\s+(.+)",
         r"mandal[ea]\s+a\s+(@?[\w\d]+)\s+que\s+(.+)",
@@ -50,13 +48,32 @@ def detectar_envio_mensaje(texto: str):
         if match:
             destinatario = match.group(1)
             mensaje = match.group(2)
-            # Si es número puro, usarlo como ID directamente
             if destinatario.isdigit():
                 return int(destinatario), mensaje
-            # Si no tiene @, agregarlo
             if not destinatario.startswith("@"):
                 destinatario = "@" + destinatario
             return destinatario, mensaje
+    return None
+
+def detectar_consulta_calendario(texto: str) -> str:
+    texto_lower = texto.lower()
+    señales_creacion = [
+        "agrega", "añade", "crea un evento", "programa",
+        "pon en mi calendario", "add to calendar",
+        "create event", "schedule a meeting", "nueva cita",
+        "nuevo evento", "crea evento", "crea un"
+    ]
+    señales_consulta = [
+        "agenda", "calendario", "calendar", "eventos",
+        "qué tengo", "que tengo", "what do i have",
+        "citas", "reuniones", "meetings", "schedule",
+        "esta semana", "this week", "hoy", "today",
+        "mañana", "tomorrow", "próximos", "upcoming"
+    ]
+    if any(s in texto_lower for s in señales_creacion):
+        return "crear"
+    elif any(s in texto_lower for s in señales_consulta):
+        return "consultar"
     return None
 
 async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -75,17 +92,76 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if exito:
             respuesta = f"✅ Mensaje enviado a {destinatario}: '{mensaje_a_enviar}'"
         else:
-            respuesta = f"❌ No pude mandar el mensaje a {destinatario}. Verifica el username."
+            respuesta = f"❌ No pude mandar el mensaje a {destinatario}."
+        guardar_mensaje(sesion_id, "assistant", respuesta)
+        await update.message.reply_text(respuesta)
+        return
+
+    # Detectar consulta de calendario
+    accion_calendario = detectar_consulta_calendario(texto_usuario)
+    if accion_calendario == "consultar":
+        await update.message.reply_text("📅 Revisando tu calendario...")
+        eventos = obtener_eventos(dias=7)
+        respuesta = formatear_eventos(eventos, idioma)
+        guardar_mensaje(sesion_id, "assistant", respuesta)
+        await update.message.reply_text(respuesta)
+        return
+
+    elif accion_calendario == "crear":
+        await update.message.reply_text("📅 Procesando el evento...")
+
+        mensajes_extraccion = [
+            {
+                "role": "system",
+                "content": (
+                    f"Today is {datetime.now().strftime('%Y-%m-%d')}. "
+                    "Extract event info from the message. "
+                    "Reply ONLY in this exact format with no extra text:\n"
+                    "TITULO: title here\n"
+                    "FECHA: YYYY-MM-DD\n"
+                    "HORA: HH:MM\n"
+                    "DURACION: 1"
+                )
+            },
+            {"role": "user", "content": texto_usuario}
+        ]
+
+        try:
+            resp = ollama_client.chat(
+                model=MODELO,
+                messages=mensajes_extraccion,
+                options={"num_predict": 50}
+            )
+            texto_ext = resp.message.content if hasattr(resp, "message") else resp["message"]["content"]
+
+            lineas = {}
+            for linea in texto_ext.strip().split("\n"):
+                if ":" in linea:
+                    clave, valor = linea.split(":", 1)
+                    lineas[clave.strip().upper()] = valor.strip()
+
+            titulo   = lineas.get("TITULO", "Nuevo evento")
+            fecha    = lineas.get("FECHA", datetime.now().strftime("%Y-%m-%d"))
+            hora     = lineas.get("HORA", "09:00")
+            duracion = int(lineas.get("DURACION", "1"))
+
+            exito = crear_evento(titulo, fecha, hora, duracion)
+
+            if exito:
+                respuesta = f"✅ Evento creado:\n📅 {titulo}\n🗓 {fecha} a las {hora}"
+            else:
+                respuesta = "❌ No pude crear el evento."
+
+        except Exception as e:
+            respuesta = "❌ No entendí los detalles. Intenta: 'Crea un evento el 7 de abril a las 3pm llamado Reunión'"
+
         guardar_mensaje(sesion_id, "assistant", respuesta)
         await update.message.reply_text(respuesta)
         return
 
     historial = obtener_historial(sesion_id)
-
-    # Buscar en documentos locales
     contexto_docs = buscar_contexto(texto_usuario)
 
-    # Buscar en internet si es necesario
     contexto_web = ""
     if necesita_busqueda(texto_usuario):
         await update.message.reply_text("🔍 Buscando...")
@@ -132,7 +208,7 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def iniciar_bot():
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, responder))
-    print("TROY Bot activo — RAG + Web + Mensajería...")
+    print("TROY Bot activo — RAG + Web + Mensajería + Calendario...")
     app.run_polling()
 
 if __name__ == "__main__":
