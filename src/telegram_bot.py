@@ -1,8 +1,8 @@
 # ─────────────────────────────────────────────────
-# TROY — Conector de Telegram v0.7
+# TROY — Conector de Telegram v0.8
 # Infima Foundation A.C.
 # RAG + Web + Mensajería + Calendario + Email
-# + Resumen Diario Automático
+# + Resumen Diario + Browser Use
 # ─────────────────────────────────────────────────
 
 import sys, os, re, asyncio
@@ -23,6 +23,7 @@ from calendario import (obtener_eventos, crear_evento, editar_evento,
                         formatear_eventos, formatear_tareas)
 from email_agent import (obtener_correos, buscar_correos,
                          mandar_correo, formatear_correos)
+from browser_use import navegar, buscar_google
 from ollama import Client
 import langdetect
 
@@ -112,6 +113,21 @@ def detectar_accion_email(texto: str) -> str:
         return "leer"
     return None
 
+def detectar_browser_use(texto: str):
+    texto_lower = texto.lower()
+    url_match = re.search(r'https?://\S+', texto)
+    if url_match and any(s in texto_lower for s in [
+        "abre", "navega", "entra a", "visita", "open", "go to", "browse",
+        "dime qué dice", "qué dice", "lee", "extrae"
+    ]):
+        return "navegar", url_match.group(0)
+    if any(s in texto_lower for s in [
+        "busca en google", "search google",
+        "encuentra en internet", "busca en la web"
+    ]):
+        return "buscar_google", texto
+    return None
+
 def extraer_con_llm(prompt_sistema: str, texto_usuario: str, tokens: int = 60) -> dict:
     resp = ollama_client.chat(
         model=MODELO,
@@ -144,7 +160,6 @@ def limpiar_titulo(titulo: str) -> str:
 async def enviar_resumen_diario(bot, chat_id: str):
     try:
         resumen = "🌅 *Buenos días, Mauricio*\n\n"
-
         loop = asyncio.get_event_loop()
         eventos = await loop.run_in_executor(None, lambda: obtener_eventos(dias=1))
 
@@ -156,12 +171,7 @@ async def enviar_resumen_diario(bot, chat_id: str):
             resumen += "📅 No tienes eventos hoy.\n"
 
         resumen += "\n¿En qué te puedo ayudar hoy?"
-
-        await bot.send_message(
-            chat_id=chat_id,
-            text=resumen,
-            parse_mode="Markdown"
-        )
+        await bot.send_message(chat_id=chat_id, text=resumen, parse_mode="Markdown")
 
     except Exception as e:
         print(f"Error enviando resumen diario: {e}")
@@ -194,6 +204,43 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
                      if exito else f"❌ No pude mandar el mensaje a {destinatario}.")
         guardar_mensaje(sesion_id, "assistant", respuesta)
         await update.message.reply_text(respuesta)
+        return
+
+    # ── Browser Use ──────────────────────────────
+    browser_accion = detectar_browser_use(texto_usuario)
+    if browser_accion:
+        accion, parametro = browser_accion
+        if accion == "navegar":
+            await update.message.reply_text(f"🌐 Navegando {parametro}...")
+            loop = asyncio.get_event_loop()
+            contenido = await loop.run_in_executor(None, lambda: navegar(parametro))
+            # Resumir con LLM
+            mensajes_resumen = [
+                {
+                    "role": "system",
+                    "content": (
+                        f"Summarize this webpage content in {idioma} in 3-5 sentences. "
+                        "Be concise and focus on the most important information."
+                    )
+                },
+                {"role": "user", "content": contenido[:2000]}
+            ]
+            resp = ollama_client.chat(model=MODELO, messages=mensajes_resumen,
+                                     options={"num_predict": 150})
+            respuesta = resp.message.content if hasattr(resp, "message") else resp["message"]["content"]
+            respuesta = f"🌐 *{parametro}*\n\n{respuesta}"
+
+        elif accion == "buscar_google":
+            query = re.sub(
+                r'busca en google|search google|encuentra en internet|busca en la web',
+                '', parametro, flags=re.IGNORECASE
+            ).strip()
+            await update.message.reply_text(f"🔍 Buscando en Google: {query}...")
+            loop = asyncio.get_event_loop()
+            respuesta = await loop.run_in_executor(None, lambda: buscar_google(query))
+
+        guardar_mensaje(sesion_id, "assistant", respuesta)
+        await update.message.reply_text(respuesta, parse_mode="Markdown")
         return
 
     # ── Email ────────────────────────────────────
@@ -422,7 +469,7 @@ def iniciar_bot():
 
     app.post_init = post_init
 
-    print("TROY Bot activo — RAG + Web + Mensajería + Calendario + Email + Resumen Diario...")
+    print("TROY Bot activo — RAG + Web + Mensajería + Calendario + Email + Browser Use...")
     app.run_polling()
 
 if __name__ == "__main__":
