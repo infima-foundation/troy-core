@@ -80,10 +80,10 @@ async def buscar_en_google(query: str) -> str:
     except Exception as e:
         return f"Error buscando en Google: {e}"
 
-async def buscar_resultado_deportivo(query: str) -> str:
+async def buscar_reciente(query: str) -> str:
     """
-    Busca resultados de partidos directamente en Google.
-    Google muestra el marcador en los primeros resultados.
+    Busca información actual en Google via Playwright.
+    Útil para noticias, resultados, precios y eventos recientes.
     """
     try:
         async with async_playwright() as p:
@@ -133,4 +133,4 @@ def buscar_google(query: str) -> str:
     return asyncio.run(buscar_en_google(query))
 
 def buscar_resultado(query: str) -> str:
-    return asyncio.run(buscar_resultado_deportivo(query))
+    return asyncio.run(buscar_reciente(query))

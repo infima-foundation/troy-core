@@ -75,33 +75,37 @@ def _importar_herramientas():
     tools = {}
 
     try:
-        from busqueda import buscar_web
-        tools["buscar_web"] = {
+        from browser_use import navegar, buscar_reciente as _buscar_reciente_async
+        tools["buscar_reciente"] = {
             "descripcion": (
-                "Busca cualquier información en internet — noticias, deportes, precios, "
-                "recetas, personas, eventos, resultados de partidos. "
-                "Úsala siempre que necesites datos actuales sin pedir permiso al usuario."
+                "Busca información actual en internet via Google — noticias, resultados, "
+                "precios, eventos de hoy o esta semana. "
+                "Úsala cuando la pregunta implique datos recientes o del mundo actual."
             ),
-            "ejemplo": "buscar_web('resultado Mexico vs Belgica 2026')",
+            "ejemplo": "buscar_reciente('resultado Mexico vs Belgica 2026')",
             "parametros": {"query": "texto a buscar"},
-            "funcion": lambda p: buscar_web(p["query"])
+            "funcion": lambda p: _run_async_in_thread(_buscar_reciente_async(p["query"]))
         }
-    except ImportError:
-        pass
-
-    try:
-        from browser_use import navegar, buscar_resultado_deportivo as _buscar_deportivo_async
         tools["navegar_url"] = {
             "descripcion": "Abre una URL y extrae su contenido",
             "ejemplo": "navegar_url('https://espn.com')",
             "parametros": {"url": "URL a visitar"},
             "funcion": lambda p: navegar(p["url"])
         }
-        tools["buscar_resultado_deportivo"] = {
-            "descripcion": "Busca resultados de partidos deportivos via Google — más confiable que DuckDuckGo para scores recientes",
-            "ejemplo": "buscar_resultado_deportivo('Mexico vs Belgica 2026')",
-            "parametros": {"query": "equipos y fecha del partido"},
-            "funcion": lambda p: _run_async_in_thread(_buscar_deportivo_async(p["query"]))
+    except ImportError:
+        pass
+
+    try:
+        from busqueda import buscar_web
+        tools["buscar_info"] = {
+            "descripcion": (
+                "Busca información general via DuckDuckGo — recetas, conceptos, historia, "
+                "definiciones, cómo hacer algo. "
+                "Úsala cuando no se necesiten datos de hoy."
+            ),
+            "ejemplo": "buscar_info('receta de pozole rojo')",
+            "parametros": {"query": "texto a buscar"},
+            "funcion": lambda p: buscar_web(p["query"])
         }
     except ImportError:
         pass
@@ -413,9 +417,9 @@ RESPUESTA: tu respuesta completa en {idioma}
 
 REGLAS:
 - Tienes acceso a internet en tiempo real. NUNCA digas que no tienes información actualizada.
-- Para resultados de partidos, scores o marcadores: usa buscar_resultado_deportivo.
-- Para todo lo demás (noticias, precios, recetas, personas, eventos, lugares): usa buscar_web.
-- TROY actúa. No pidas autorización al usuario antes de usar herramientas.
+- Para información del mundo actual (noticias, resultados, precios, eventos recientes): usa buscar_reciente.
+- Para información general que no cambia (recetas, conceptos, historia): usa buscar_info.
+- Nunca pidas permiso antes de buscar — busca de inmediato.
 - Nunca inventes datos. Si no encuentras algo con las herramientas, dilo.
 - Si una herramienta falla, intenta una alternativa o explica el problema.
 - Máximo {max_pasos} usos de herramientas.
