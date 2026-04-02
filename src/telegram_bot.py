@@ -51,25 +51,11 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     loop = asyncio.get_running_loop()
 
-    # Los pensamientos intermedios del LLM son internos — no llegan al usuario.
-    def callback_pensamiento(pensamiento: str):
-        pass
-
-    # El orquestador es blocking — lo corremos en un thread.
-    tarea = loop.run_in_executor(
-        None,
-        lambda: orquestador.procesar(texto_usuario, sesion_id, callback_pensamiento)
-    )
-
-    # "Pensando..." solo si la tarea tarda más de 2 segundos.
     try:
-        respuesta = await asyncio.wait_for(asyncio.shield(tarea), timeout=5.0)
-    except asyncio.TimeoutError:
-        await update.message.reply_text("Pensando...")
-        try:
-            respuesta = await tarea
-        except Exception as e:
-            respuesta = f"Error en el orquestador: {e}"
+        respuesta = await loop.run_in_executor(
+            None,
+            lambda: orquestador.procesar(texto_usuario, sesion_id)
+        )
     except Exception as e:
         respuesta = f"Error en el orquestador: {e}"
 

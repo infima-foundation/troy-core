@@ -292,21 +292,23 @@ class Memoria:
 # El ciclo de razonamiento y ejecución.
 # ─────────────────────────────────────────────────
 
-# Palabras que indican que se necesita una herramienta — activan el turn loop completo.
-_PALABRAS_HERRAMIENTA = {
-    "busca", "buscar", "búscame", "encuentra", "agenda", "calendario",
-    "evento", "eventos", "cita", "reunión", "tarea", "tareas",
-    "correo", "email", "gmail", "inbox", "bandeja",
-    "resultado", "marcador", "score", "partido", "juego", "ganó", "perdió",
-    "navega", "abre", "visita", "url", "http", "www",
-    "manda", "mándale", "envía", "dile", "mensaje",
-    "resumen", "documenta", "archivos",
+# Saludos puros — los únicos que van por fast path sin turn loop.
+# Todo lo demás (preguntas, peticiones, datos del mundo) pasa por el turn loop
+# para tener acceso a buscar_web y herramientas.
+_SALUDOS_PUROS = {
+    "hola", "hi", "hello", "hey", "buenas", "buenos días", "buenas tardes",
+    "buenas noches", "good morning", "good afternoon", "good evening",
+    "gracias", "thank you", "thanks", "de nada", "ok", "okey", "okay",
+    "entendido", "perfecto", "listo", "dale", "bien", "genial", "adiós",
+    "bye", "hasta luego", "chao", "nos vemos", "qué tal", "cómo estás",
+    "how are you", "qué onda",
 }
 
 
-def _necesita_herramientas(texto: str) -> bool:
-    palabras = set(texto.lower().split())
-    return bool(palabras & _PALABRAS_HERRAMIENTA)
+def _es_saludo_puro(texto: str) -> bool:
+    """True solo si el texto completo normalizado es un saludo reconocido."""
+    normalizado = texto.strip().lower().rstrip("!?,.")
+    return normalizado in _SALUDOS_PUROS
 
 
 def _parsear_decision(texto: str) -> dict:
@@ -364,8 +366,12 @@ Si ya puedes responder, responde exactamente así (una línea):
 RESPUESTA: tu respuesta completa en {idioma}
 
 REGLAS:
-- Nunca inventes datos. Si no sabes, dilo.
+- Tienes acceso a internet en tiempo real via buscar_web y buscar_resultado_deportivo.
+  Para CUALQUIER pregunta sobre datos actuales, noticias, deportes, precios, recetas,
+  personas, eventos, lugares — usa buscar_web primero. NUNCA digas que no tienes acceso
+  a internet o información actualizada — siempre puedes buscar.
 - Para partidos/scores/marcadores usa SIEMPRE buscar_resultado_deportivo, nunca buscar_web.
+- Nunca inventes datos. Si no encuentras algo con las herramientas, dilo.
 - Si una herramienta falla, intenta una alternativa o explica el problema.
 - Máximo {max_pasos} usos de herramientas.
 - Responde siempre en {idioma}.
@@ -527,9 +533,9 @@ def _turn_loop_interno(instruccion: str, sesion_id: str,
 def procesar(instruccion: str, sesion_id: str = "default",
              callback_pensamiento=None) -> str:
     """Punto de entrada principal del orquestador."""
-    # Fast path: menos de 15 palabras y sin palabras clave de herramientas
-    # → LLM directo, sin turn loop ni overhead de formato
-    if len(instruccion.split()) < 15 and not _necesita_herramientas(instruccion):
+    # Fast path: solo saludos puros → LLM directo sin turn loop
+    # Cualquier pregunta o dato del mundo real pasa por el turn loop con acceso a internet
+    if _es_saludo_puro(instruccion):
         return _respuesta_directa(instruccion, sesion_id)
     return turn_loop(instruccion, sesion_id, callback_pensamiento)
 
