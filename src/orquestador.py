@@ -75,17 +75,22 @@ def _importar_herramientas():
     tools = {}
 
     try:
-        from browser_use import navegar, buscar_reciente as _buscar_reciente_async
+        from busqueda_paralela import buscar_multifuente
         tools["buscar_reciente"] = {
             "descripcion": (
-                "Busca información actual en internet via Google — noticias, resultados, "
+                "Busca información actual en internet — noticias, resultados, "
                 "precios, eventos de hoy o esta semana. "
                 "Úsala cuando la pregunta implique datos recientes o del mundo actual."
             ),
             "ejemplo": "buscar_reciente('resultado Mexico vs Belgica 2026')",
             "parametros": {"query": "texto a buscar"},
-            "funcion": lambda p: _run_async_in_thread(_buscar_reciente_async(p["query"]))
+            "funcion": lambda p: buscar_multifuente(p["query"])
         }
+    except ImportError:
+        pass
+
+    try:
+        from browser_use import navegar
         tools["navegar_url"] = {
             "descripcion": "Abre una URL y extrae su contenido",
             "ejemplo": "navegar_url('https://espn.com')",
@@ -505,7 +510,9 @@ def ejecutar_herramienta(nombre: str, parametros: dict,
         return resultado_str, True
 
     except Exception as e:
-        error = f"Error: {str(e)}"
+        traceback.print_exc()
+        error = f"Error en {nombre}: {type(e).__name__}: {e}"
+        print(f"[TROY ejecutar_herramienta] {error}")
         memoria.registrar_accion(nombre, parametros, error, False)
         return error, False
 
