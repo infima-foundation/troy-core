@@ -316,6 +316,58 @@ def _es_saludo_puro(texto: str) -> bool:
     return normalizado in _SALUDOS_PUROS
 
 
+# Indicadores de actualidad — activan buscar_reciente (Google/Playwright)
+_PALABRAS_RECIENTE = {
+    "hoy", "ayer", "ahora", "2024", "2025", "2026",
+    "reciente", "último", "ultima", "últimos", "ultimos", "latest",
+    "resultado", "partido", "score", "marcador", "ganó", "gano",
+    "perdió", "perdio", "empató", "empato", "juego", "liga", "copa", "gol",
+    "noticia", "noticias", "news",
+    "precio", "cotización", "cotizacion", "dólar", "dollar", "bitcoin", "euro",
+    "clima", "temperatura", "pronóstico", "pronostico", "weather",
+    "today", "yesterday",
+}
+# Frases de actualidad (multi-palabra)
+_FRASES_RECIENTE = [
+    "qué pasó", "que paso", "quién ganó", "quien gano",
+    "cómo quedó", "como quedo", "esta semana", "este año", "este mes",
+    "qué hay de", "que hay de", "cómo va", "como va",
+]
+
+# Indicadores de conocimiento general — activan buscar_info (DuckDuckGo)
+_PALABRAS_INFO = {
+    "receta", "ingredientes", "cocinar", "preparar",
+    "define", "definición", "definicion", "significado", "significa",
+    "historia", "origen", "etymology",
+    "how", "meaning",
+}
+# Frases de conocimiento general (multi-palabra)
+_FRASES_INFO = [
+    "qué es", "que es", "what is", "cómo se hace", "como se hace",
+    "cómo hacer", "como hacer", "cómo funciona", "como funciona",
+    "quién fue", "quien fue", "cuál es", "cual es",
+]
+
+
+def _decidir_herramienta(texto: str):
+    """Decide qué herramienta de búsqueda usar basándose en keywords.
+
+    Retorna ('buscar_reciente', query), ('buscar_info', query), o None.
+    buscar_reciente tiene prioridad sobre buscar_info cuando hay señales de actualidad.
+    """
+    t = texto.lower()
+    palabras = set(t.split())
+
+    # Actualidad tiene prioridad
+    if palabras & _PALABRAS_RECIENTE or any(f in t for f in _FRASES_RECIENTE):
+        return ("buscar_reciente", texto)
+
+    if palabras & _PALABRAS_INFO or any(f in t for f in _FRASES_INFO):
+        return ("buscar_info", texto)
+
+    return None
+
+
 def _contiene_formato_interno(texto: str) -> bool:
     """True si el texto contiene el formato interno del agente (nunca debe llegar al usuario)."""
     t = texto.upper()
@@ -486,6 +538,48 @@ def _respuesta_directa(instruccion: str, sesion_id: str) -> str:
     return texto
 
 
+def _ejecutar_y_redactar(instruccion: str, sesion_id: str,
+                          herramienta: str, query: str) -> str:
+    """Ejecuta una herramienta directamente y usa el LLM solo para redactar la respuesta.
+
+    El LLM no decide herramientas — solo convierte el resultado en lenguaje natural.
+    """
+    idioma = detectar_idioma(instruccion)
+    memoria = Memoria(sesion_id)
+
+    resultado, exitosa = ejecutar_herramienta(herramienta, {"query": query}, memoria)
+
+    if not exitosa or not resultado.strip():
+        # Si la herramienta falló, responder directamente sin mencionar la búsqueda
+        return _respuesta_directa(instruccion, sesion_id)
+
+    mensajes = [
+        {"role": "system", "content": (
+            f"Eres TROY, agente personal de Infima Foundation. "
+            f"Responde en {idioma} de forma directa y concisa. "
+            f"Usa los resultados de búsqueda para responder la pregunta. "
+            f"No menciones que hiciste una búsqueda ni cites fuentes a menos que sea relevante."
+        )},
+        {"role": "user", "content": (
+            f"Pregunta: {instruccion}\n\n"
+            f"Resultados:\n{resultado}"
+        )}
+    ]
+
+    resp = ollama_client.chat(model=MODELO, messages=mensajes,
+                              options={"num_predict": 400, "temperature": 0.3})
+    texto = resp.message.content if hasattr(resp, "message") else resp["message"]["content"]
+
+    try:
+        from memoria import guardar_mensaje
+        guardar_mensaje(sesion_id, "user", instruccion)
+        guardar_mensaje(sesion_id, "assistant", texto)
+    except Exception:
+        pass
+
+    return texto
+
+
 def turn_loop(instruccion: str, sesion_id: str,
               callback_pensamiento=None) -> str:
     """
@@ -594,11 +688,22 @@ def _turn_loop_interno(instruccion: str, sesion_id: str,
 
 def procesar(instruccion: str, sesion_id: str = "default",
              callback_pensamiento=None) -> str:
-    """Punto de entrada principal del orquestador."""
-    # Fast path: solo saludos puros → LLM directo sin turn loop
-    # Cualquier pregunta o dato del mundo real pasa por el turn loop con acceso a internet
+    """Punto de entrada principal del orquestador.
+
+    Flujo de tres ramas:
+    1. Saludo puro → LLM directo (sin herramientas, sin formato)
+    2. Búsqueda detectada por keywords → ejecutar herramienta + LLM redacta
+    3. Tarea compleja (calendario, email, Telegram) → turn loop
+    """
     if _es_saludo_puro(instruccion):
         return _respuesta_directa(instruccion, sesion_id)
+
+    decision = _decidir_herramienta(instruccion)
+    if decision:
+        herramienta, query = decision
+        print(f"[TROY] routing automático → {herramienta}: {repr(query[:60])}")
+        return _ejecutar_y_redactar(instruccion, sesion_id, herramienta, query)
+
     return turn_loop(instruccion, sesion_id, callback_pensamiento)
 
 
