@@ -562,22 +562,33 @@ def _ejecutar_y_redactar(instruccion: str, sesion_id: str,
     if not exitosa or not resultado.strip():
         return _respuesta_directa(instruccion, sesion_id)
 
-    mensajes = [
-        {"role": "system", "content": (
-            f"Eres TROY, agente personal de Infima Foundation. "
-            f"Responde en {idioma} de forma directa y concisa. "
-            f"Aquí hay información de múltiples fuentes sobre la pregunta del usuario. "
-            f"Sintetiza una respuesta precisa y directa usando solo los datos que aparecen en las fuentes. "
-            f"Si hay contradicciones entre fuentes, usa el dato que más se repite."
-        )},
-        {"role": "user", "content": (
-            f"Pregunta: {instruccion}\n\n"
-            f"Fuentes:\n{resultado}"
-        )}
-    ]
+    print(f"[TROY _ejecutar_y_redactar] resultado enviado al LLM (500 chars):\n{resultado[:500]}\n{'─'*60}")
+
+    # Intentar extracción directa antes del LLM (deportes, scores, etc.)
+    try:
+        from extractor import extraer_datos
+        dato_directo = extraer_datos(resultado, instruccion)
+    except Exception:
+        dato_directo = None
+
+    if dato_directo:
+        # Extractor encontró el dato — LLM solo lo formatea en lenguaje natural
+        contenido_fuentes = dato_directo
+    else:
+        contenido_fuentes = resultado
+
+    prompt = (
+        f"Responde la pregunta del usuario usando SOLO la información de las fuentes. "
+        f"Si la información está en las fuentes, dala directamente sin decir que no tienes acceso. "
+        f"Responde en {idioma}.\n\n"
+        f"Pregunta: {instruccion}\n\n"
+        f"Fuentes:\n{contenido_fuentes}"
+    )
+
+    mensajes = [{"role": "user", "content": prompt}]
 
     resp = ollama_client.chat(model=MODELO, messages=mensajes,
-                              options={"num_predict": 400, "temperature": 0.3})
+                              options={"num_predict": 300, "temperature": 0.2})
     texto = resp.message.content if hasattr(resp, "message") else resp["message"]["content"]
 
     try:
