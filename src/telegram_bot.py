@@ -1,8 +1,8 @@
 # ─────────────────────────────────────────────────
-# TROY — Conector de Telegram v0.8
+# TROY — Conector de Telegram v0.9
 # Infima Foundation A.C.
 # RAG + Web + Mensajería + Calendario + Email
-# + Resumen Diario + Browser Use
+# + Resumen Diario + Browser Use + Deportes
 # ─────────────────────────────────────────────────
 
 import sys, os, re, asyncio
@@ -23,7 +23,7 @@ from calendario import (obtener_eventos, crear_evento, editar_evento,
                         formatear_eventos, formatear_tareas)
 from email_agent import (obtener_correos, buscar_correos,
                          mandar_correo, formatear_correos)
-from browser_use import navegar, buscar_google
+from browser_use import navegar, buscar_google, buscar_resultado
 from ollama import Client
 import langdetect
 
@@ -115,11 +115,11 @@ def detectar_accion_email(texto: str) -> str:
 
 def detectar_browser_use(texto: str):
     texto_lower = texto.lower()
-    # Detectar URLs con o sin https://
     url_match = re.search(r'https?://\S+|www\.\S+\.\S+', texto)
     if url_match and any(s in texto_lower for s in [
         "abre", "navega", "entra a", "visita", "open", "go to", "browse",
-        "dime qué dice", "qué dice", "que dice", "lee", "extrae", "busca en"
+        "dime qué dice", "qué dice", "que dice", "lee", "extrae", "busca en",
+        "dime", "qué hay", "que hay", "resultado", "score", "marcador"
     ]):
         url = url_match.group(0)
         if not url.startswith("http"):
@@ -130,6 +130,20 @@ def detectar_browser_use(texto: str):
         "encuentra en internet", "busca en la web"
     ]):
         return "buscar_google", texto
+    return None
+
+def detectar_pregunta_deportiva(texto: str) -> str:
+    texto_lower = texto.lower()
+    señales = [
+        "cuánto quedó", "cuanto quedo", "cómo quedó", "como quedo",
+        "resultado del partido", "resultado del juego", "marcador",
+        "score", "ganó", "gano", "perdió", "perdio", "empató", "empato",
+        "qué pasó en el partido", "que paso en el partido",
+        "goles", "quién ganó", "quien gano", "quedo el juego",
+        "quedó el partido", "quedo el partido"
+    ]
+    if any(s in texto_lower for s in señales):
+        return texto
     return None
 
 def extraer_con_llm(prompt_sistema: str, texto_usuario: str, tokens: int = 60) -> dict:
@@ -210,6 +224,37 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(respuesta)
         return
 
+    # ── Resultados deportivos ────────────────────
+    pregunta_deportiva = detectar_pregunta_deportiva(texto_usuario)
+    if pregunta_deportiva:
+        await update.message.reply_text("⚽ Buscando el resultado...")
+        loop = asyncio.get_event_loop()
+        contenido = await loop.run_in_executor(
+            None, lambda: buscar_resultado(f"{texto_usuario} 2026")
+        )
+        mensajes_resultado = [
+            {
+                "role": "system",
+                "content": (
+                    f"You are TROY. Answer the user's sports question using ONLY "
+                    f"the search results below. Respond in {idioma}. "
+                    f"Be direct — give the score if it appears in the results. "
+                    f"IMPORTANT: If the exact score is NOT in the results, "
+                    f"say: 'No encontré el resultado de ese partido.' "
+                    f"NEVER invent or guess a score.\n\n"
+                    f"USER QUESTION: {texto_usuario}\n\n"
+                    f"SEARCH RESULTS:\n{contenido}"
+                )
+            },
+            {"role": "user", "content": texto_usuario}
+        ]
+        resp = ollama_client.chat(model=MODELO, messages=mensajes_resultado,
+                                 options={"num_predict": 100})
+        respuesta = resp.message.content if hasattr(resp, "message") else resp["message"]["content"]
+        guardar_mensaje(sesion_id, "assistant", respuesta)
+        await update.message.reply_text(respuesta)
+        return
+
     # ── Browser Use ──────────────────────────────
     browser_accion = detectar_browser_use(texto_usuario)
     if browser_accion:
@@ -222,16 +267,20 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 {
                     "role": "system",
                     "content": (
-                        f"Summarize this webpage content in {idioma} in 3-5 sentences. "
-                        "Be concise and focus on the most important information."
+                        f"You are TROY. Answer the user's question directly using "
+                        f"the webpage content below. Respond in {idioma}. "
+                        f"Be direct and specific — no preamble, no intro phrases. "
+                        f"If the answer is not in the content, say so briefly.\n\n"
+                        f"USER QUESTION: {texto_usuario}\n\n"
+                        f"WEBPAGE CONTENT:\n{contenido[:3000]}"
                     )
                 },
-                {"role": "user", "content": contenido[:2000]}
+                {"role": "user", "content": texto_usuario}
             ]
             resp = ollama_client.chat(model=MODELO, messages=mensajes_resumen,
-                                     options={"num_predict": 150})
+                                     options={"num_predict": 200})
             respuesta = resp.message.content if hasattr(resp, "message") else resp["message"]["content"]
-            respuesta = f"🌐 *{parametro}*\n\n{respuesta}"
+            respuesta = f"🌐 {parametro}\n\n{respuesta}"
 
         elif accion == "buscar_google":
             query = re.sub(
@@ -243,7 +292,7 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
             respuesta = await loop.run_in_executor(None, lambda: buscar_google(query))
 
         guardar_mensaje(sesion_id, "assistant", respuesta)
-        await update.message.reply_text(respuesta, parse_mode="Markdown")
+        await update.message.reply_text(respuesta)
         return
 
     # ── Email ────────────────────────────────────
@@ -472,7 +521,7 @@ def iniciar_bot():
 
     app.post_init = post_init
 
-    print("TROY Bot activo — RAG + Web + Mensajería + Calendario + Email + Browser Use...")
+    print("TROY Bot activo — RAG + Web + Mensajería + Calendario + Email + Browser Use + Deportes...")
     app.run_polling()
 
 if __name__ == "__main__":

@@ -1,8 +1,6 @@
 # ─────────────────────────────────────────────────
 # TROY — Módulo de Browser Use
 # Infima Foundation A.C.
-# Navega sitios web, extrae información,
-# llena formularios y hace clicks automáticamente.
 # ─────────────────────────────────────────────────
 
 import asyncio
@@ -11,20 +9,15 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from playwright.async_api import async_playwright
 
-async def navegar_y_extraer(url: str, instruccion: str = None) -> str:
-    """
-    Abre una URL y extrae el contenido de texto.
-    Si hay una instrucción, extrae solo lo relevante.
-    """
+async def navegar_y_extraer(url: str) -> str:
     try:
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
             page = await browser.new_page()
 
-            await page.goto(url, wait_until="domcontentloaded", timeout=15000)
-            await page.wait_for_timeout(2000)
+            await page.goto(url, wait_until="networkidle", timeout=20000)
+            await page.wait_for_timeout(4000)
 
-            # Extraer todo el texto visible
             texto = await page.evaluate("""() => {
                 const elementos = document.querySelectorAll(
                     'p, h1, h2, h3, h4, li, td, th, span, div'
@@ -36,19 +29,16 @@ async def navegar_y_extraer(url: str, instruccion: str = None) -> str:
                         textos.push(t);
                     }
                 }
-                return [...new Set(textos)].slice(0, 50).join('\\n');
+                return [...new Set(textos)].slice(0, 80).join('\\n');
             }""")
 
             await browser.close()
-            return texto[:3000] if texto else "No se pudo extraer contenido."
+            return texto[:4000] if texto else "No se pudo extraer contenido."
 
     except Exception as e:
         return f"Error navegando {url}: {e}"
 
 async def buscar_en_google(query: str) -> str:
-    """
-    Busca en Google y retorna los primeros resultados.
-    """
     try:
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
@@ -56,7 +46,7 @@ async def buscar_en_google(query: str) -> str:
 
             url = f"https://www.google.com/search?q={query.replace(' ', '+')}"
             await page.goto(url, wait_until="domcontentloaded", timeout=15000)
-            await page.wait_for_timeout(1000)
+            await page.wait_for_timeout(2000)
 
             resultados = await page.evaluate("""() => {
                 const items = document.querySelectorAll('div.g');
@@ -82,7 +72,7 @@ async def buscar_en_google(query: str) -> str:
             for r in resultados:
                 texto += f"📌 {r.get('titulo', '')}\n"
                 if r.get('descripcion'):
-                    texto += f"   {r['descripcion'][:150]}\n"
+                    texto += f"   {r['descripcion'][:200]}\n"
                 texto += f"   🔗 {r.get('enlace', '')}\n\n"
 
             return texto.strip()
@@ -90,26 +80,57 @@ async def buscar_en_google(query: str) -> str:
     except Exception as e:
         return f"Error buscando en Google: {e}"
 
-async def tomar_screenshot(url: str, ruta: str = "/tmp/troy_screenshot.png") -> str:
+async def buscar_resultado_deportivo(query: str) -> str:
     """
-    Toma un screenshot de una página web.
+    Busca resultados de partidos directamente en Google.
+    Google muestra el marcador en los primeros resultados.
     """
     try:
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
             page = await browser.new_page()
+
+            url = f"https://www.google.com/search?q={query.replace(' ', '+')}&hl=es"
             await page.goto(url, wait_until="domcontentloaded", timeout=15000)
-            await page.wait_for_timeout(1000)
-            await page.screenshot(path=ruta, full_page=False)
+            await page.wait_for_timeout(2000)
+
+            # Extraer el bloque de resultado deportivo de Google
+            contenido = await page.evaluate("""() => {
+                const textos = [];
+                // Bloque de marcador de Google
+                const bloques = document.querySelectorAll(
+                    '[data-attrid], .imso-hov, .imso_mh, ' +
+                    '.BNeawe, .kno-rdesc, .LGOjhe, ' +
+                    'div[role="heading"], .card-section'
+                );
+                for (const b of bloques) {
+                    const t = b.innerText?.trim();
+                    if (t && t.length > 2 && t.length < 300) {
+                        textos.push(t);
+                    }
+                }
+                // También extraer texto general
+                const general = document.querySelectorAll('div.g, .BNeawe');
+                for (const g of general) {
+                    const t = g.innerText?.trim();
+                    if (t && t.length > 10 && t.length < 400) {
+                        textos.push(t);
+                    }
+                }
+                return [...new Set(textos)].slice(0, 30).join('\\n');
+            }""")
+
             await browser.close()
-            return ruta
+            return contenido[:3000] if contenido else ""
+
     except Exception as e:
-        return f"Error tomando screenshot: {e}"
+        return f"Error buscando resultado: {e}"
 
 def navegar(url: str) -> str:
-    """Wrapper síncrono para navegar."""
     return asyncio.run(navegar_y_extraer(url))
 
 def buscar_google(query: str) -> str:
-    """Wrapper síncrono para buscar en Google."""
     return asyncio.run(buscar_en_google(query))
+
+def buscar_resultado(query: str) -> str:
+    return asyncio.run(buscar_resultado_deportivo(query))
