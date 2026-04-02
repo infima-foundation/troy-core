@@ -77,8 +77,12 @@ def _importar_herramientas():
     try:
         from busqueda import buscar_web
         tools["buscar_web"] = {
-            "descripcion": "Busca información actual en internet",
-            "ejemplo": "buscar_web('precio Tesla hoy')",
+            "descripcion": (
+                "Busca cualquier información en internet — noticias, deportes, precios, "
+                "recetas, personas, eventos, resultados de partidos. "
+                "Úsala siempre que necesites datos actuales sin pedir permiso al usuario."
+            ),
+            "ejemplo": "buscar_web('resultado Mexico vs Belgica 2026')",
             "parametros": {"query": "texto a buscar"},
             "funcion": lambda p: buscar_web(p["query"])
         }
@@ -86,21 +90,12 @@ def _importar_herramientas():
         pass
 
     try:
-        from browser_use import navegar, buscar_resultado_deportivo as _buscar_deportivo_async
+        from browser_use import navegar
         tools["navegar_url"] = {
             "descripcion": "Abre una URL y extrae su contenido",
             "ejemplo": "navegar_url('https://espn.com')",
             "parametros": {"url": "URL a visitar"},
             "funcion": lambda p: navegar(p["url"])
-        }
-        tools["buscar_resultado_deportivo"] = {
-            "descripcion": "Busca resultados de partidos deportivos",
-            "ejemplo": "buscar_resultado_deportivo('Mexico vs Belgica 2026')",
-            "parametros": {"query": "equipos y fecha"},
-            # Usamos _run_async_in_thread con la coroutine directamente para evitar
-            # el conflicto de event loop que causa asyncio.run() dentro de un thread
-            # que Playwright ya puede haber inicializado con su propio loop.
-            "funcion": lambda p: _run_async_in_thread(_buscar_deportivo_async(p["query"]))
         }
     except ImportError:
         pass
@@ -383,11 +378,11 @@ Si ya puedes responder, responde exactamente así (una línea):
 RESPUESTA: tu respuesta completa en {idioma}
 
 REGLAS:
-- Tienes acceso a internet en tiempo real via buscar_web y buscar_resultado_deportivo.
-  Para CUALQUIER pregunta sobre datos actuales, noticias, deportes, precios, recetas,
-  personas, eventos, lugares — usa buscar_web primero. NUNCA digas que no tienes acceso
-  a internet o información actualizada — siempre puedes buscar.
-- Para partidos/scores/marcadores usa SIEMPRE buscar_resultado_deportivo, nunca buscar_web.
+- Tienes acceso a internet en tiempo real via buscar_web. Para CUALQUIER pregunta sobre
+  datos actuales — noticias, deportes, precios, recetas, personas, eventos, lugares,
+  resultados de partidos — usa buscar_web de inmediato. NUNCA digas que no tienes
+  acceso a internet o información actualizada.
+- TROY actúa. No pidas autorización al usuario antes de usar herramientas.
 - Nunca inventes datos. Si no encuentras algo con las herramientas, dilo.
 - Si una herramienta falla, intenta una alternativa o explica el problema.
 - Máximo {max_pasos} usos de herramientas.
