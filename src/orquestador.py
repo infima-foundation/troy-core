@@ -312,13 +312,17 @@ def _es_saludo_puro(texto: str) -> bool:
 
 
 def _parsear_decision(texto: str) -> dict:
-    """Parsea el formato simplificado USAR/PARAMETROS/RESPUESTA del LLM.
+    """Parsea la respuesta del LLM. Soporta tres formatos:
 
-    Formatos esperados:
-      USAR: nombre_herramienta
-      PARAMETROS: {"key": "value"}
+      1. Formato estructurado (preferido):
+           USAR: nombre_herramienta
+           PARAMETROS: {"key": "value"}
+           RESPUESTA: texto al usuario
 
-      RESPUESTA: texto de respuesta al usuario
+      2. Llamada a función en texto plano (fallback):
+           buscar_resultado_deportivo("Mexico vs Belgica 2026")
+
+      3. Texto libre → respuesta directa al usuario.
     """
     texto = texto.strip()
 
@@ -343,6 +347,19 @@ def _parsear_decision(texto: str) -> dict:
         if "parametros" not in resultado:
             resultado["parametros"] = {}
         return resultado
+
+    # Caso: llamada a función en texto plano — nombre_herramienta("arg") o nombre('arg')
+    fn_match = re.search(r'\b(\w+)\s*\(\s*([^)]*)\s*\)', texto)
+    if fn_match:
+        nombre = fn_match.group(1)
+        if nombre in HERRAMIENTAS:
+            args_raw = fn_match.group(2).strip()
+            # Extraer el valor del primer argumento (con o sin comillas)
+            arg_match = re.search(r'["\'](.+?)["\']', args_raw)
+            arg_val = arg_match.group(1) if arg_match else args_raw
+            # Mapear al primer parámetro declarado en el registry
+            primer_param = next(iter(HERRAMIENTAS[nombre]["parametros"]), "query")
+            return {"accion": nombre, "parametros": {primer_param: arg_val}}
 
     # Fallback: tratar todo el texto como respuesta directa
     return {"respuesta_final": texto}
@@ -476,6 +493,7 @@ def _turn_loop_interno(instruccion: str, sesion_id: str,
     mensajes.append({"role": "user", "content": instruccion})
 
     pasos = 0
+    ultimo_resultado = None  # último resultado de herramienta ejecutada
 
     while pasos < MAX_PASOS:
         pasos += 1
@@ -512,6 +530,7 @@ def _turn_loop_interno(instruccion: str, sesion_id: str,
             resultado, exitosa = ejecutar_herramienta(
                 herramienta, parametros, memoria
             )
+            ultimo_resultado = resultado
 
             mensajes.append({"role": "assistant", "content": texto})
             mensajes.append({
@@ -520,7 +539,18 @@ def _turn_loop_interno(instruccion: str, sesion_id: str,
             })
             continue
 
-        # Si llegó aquí sin acción ni respuesta, terminar
+        # El LLM no produjo ni acción ni respuesta estructurada.
+        # Si acabamos de ejecutar una herramienta, devolver su resultado directamente.
+        if ultimo_resultado is not None:
+            print(f"[TROY paso {pasos}] LLM no produjo RESPUESTA tras herramienta — usando resultado directo")
+            try:
+                from memoria import guardar_mensaje
+                guardar_mensaje(sesion_id, "user", instruccion)
+                guardar_mensaje(sesion_id, "assistant", ultimo_resultado)
+            except Exception:
+                pass
+            return ultimo_resultado
+
         break
 
     return f"No pude completar la tarea después de {pasos} pasos. El modelo no devolvió una acción ni respuesta final válida."
