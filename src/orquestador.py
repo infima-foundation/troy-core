@@ -679,10 +679,15 @@ def _turn_loop_interno(instruccion: str, sesion_id: str,
             )
             ultimo_resultado = resultado
 
+            print(f"[TROY resultado herramienta] {herramienta}: {repr(resultado[:300])}")
+
             mensajes.append({"role": "assistant", "content": texto})
             mensajes.append({
                 "role": "user",
-                "content": f"Resultado de {herramienta}: {resultado}"
+                "content": (
+                    f"INFORMACIÓN ENCONTRADA EN INTERNET:\n{resultado}\n\n"
+                    f"Usa esta información para responder la pregunta original: {instruccion}"
+                )
             })
             continue
 
