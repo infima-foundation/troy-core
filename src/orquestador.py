@@ -518,6 +518,15 @@ def ejecutar_herramienta(nombre: str, parametros: dict,
         return error, False
 
 
+def _guardar_memoria(sesion_id: str, instruccion: str, respuesta: str):
+    try:
+        from memoria import guardar_mensaje
+        guardar_mensaje(sesion_id, "user", instruccion)
+        guardar_mensaje(sesion_id, "assistant", respuesta)
+    except Exception:
+        pass
+
+
 def _respuesta_directa(instruccion: str, sesion_id: str) -> str:
     """LLM directo sin turn loop — para saludos y preguntas simples."""
     idioma = detectar_idioma(instruccion)
@@ -570,20 +579,19 @@ def _ejecutar_y_redactar(instruccion: str, sesion_id: str,
     if not exitosa or not resultado.strip():
         return _respuesta_directa(instruccion, sesion_id)
 
-    print(f"[TROY _ejecutar_y_redactar] resultado enviado al LLM (500 chars):\n{resultado[:500]}\n{'─'*60}")
+    print(f"[TROY _ejecutar_y_redactar] resultado (500 chars):\n{resultado[:500]}\n{'─'*60}")
 
-    # Intentar extracción directa antes del LLM (deportes, scores, etc.)
+    # Extracción directa — si encuentra el dato, devolver sin pasar por el LLM
     try:
         from extractor import extraer_datos
         dato_directo = extraer_datos(resultado, instruccion)
+        if dato_directo:
+            _guardar_memoria(sesion_id, instruccion, dato_directo)
+            return dato_directo
     except Exception:
-        dato_directo = None
+        pass
 
-    if dato_directo:
-        # Extractor encontró el dato — LLM solo lo formatea en lenguaje natural
-        contenido_fuentes = dato_directo
-    else:
-        contenido_fuentes = resultado
+    contenido_fuentes = resultado
 
     prompt = (
         f"INSTRUCCIÓN OBLIGATORIA: El siguiente texto contiene la información "
@@ -690,6 +698,16 @@ def _turn_loop_interno(instruccion: str, sesion_id: str,
             ultimo_resultado = resultado
 
             print(f"[TROY resultado herramienta] {herramienta}: {repr(resultado[:300])}")
+
+            # Extracción directa — si encuentra el dato, devolver sin más turnos de LLM
+            try:
+                from extractor import extraer_datos
+                dato_directo = extraer_datos(resultado, instruccion)
+                if dato_directo:
+                    _guardar_memoria(sesion_id, instruccion, dato_directo)
+                    return dato_directo
+            except Exception:
+                pass
 
             mensajes.append({"role": "assistant", "content": texto})
             mensajes.append({
