@@ -586,17 +586,19 @@ def _ejecutar_y_redactar(instruccion: str, sesion_id: str,
         contenido_fuentes = resultado
 
     prompt = (
-        f"Responde la pregunta del usuario usando SOLO la información de las fuentes. "
-        f"Si la información está en las fuentes, dala directamente sin decir que no tienes acceso. "
-        f"Responde en {idioma}.\n\n"
-        f"Pregunta: {instruccion}\n\n"
-        f"Fuentes:\n{contenido_fuentes}"
+        f"INSTRUCCIÓN OBLIGATORIA: El siguiente texto contiene la información "
+        f"real y actualizada. DEBES usarla. NO uses tu conocimiento previo.\n\n"
+        f"INFORMACIÓN REAL:\n{contenido_fuentes}\n\n"
+        f"PREGUNTA: {instruccion}\n\n"
+        f"Responde ÚNICAMENTE con lo que dice el texto de INFORMACIÓN REAL. "
+        f"Si dice '1-1', responde '1-1'. Si dice 'empate', di 'empate'. "
+        f"Copia los datos exactos. Responde en {idioma}."
     )
 
     mensajes = [{"role": "user", "content": prompt}]
 
     resp = ollama_client.chat(model=MODELO, messages=mensajes,
-                              options={"num_predict": 300, "temperature": 0.2})
+                              options={"num_predict": 150, "temperature": 0.2})
     texto = resp.message.content if hasattr(resp, "message") else resp["message"]["content"]
 
     try:
@@ -656,7 +658,7 @@ def _turn_loop_interno(instruccion: str, sesion_id: str,
         resp = ollama_client.chat(
             model=MODELO,
             messages=mensajes,
-            options={"num_predict": 300, "temperature": 0.1}
+            options={"num_predict": 150, "temperature": 0.1}
         )
 
         texto = resp.message.content if hasattr(resp, "message") \
@@ -693,8 +695,13 @@ def _turn_loop_interno(instruccion: str, sesion_id: str,
             mensajes.append({
                 "role": "user",
                 "content": (
-                    f"INFORMACIÓN ENCONTRADA EN INTERNET:\n{resultado}\n\n"
-                    f"Usa esta información para responder la pregunta original: {instruccion}"
+                    f"INSTRUCCIÓN OBLIGATORIA: El siguiente texto contiene la información "
+                    f"real y actualizada. DEBES usarla. NO uses tu conocimiento previo.\n\n"
+                    f"INFORMACIÓN REAL:\n{resultado}\n\n"
+                    f"PREGUNTA: {instruccion}\n\n"
+                    f"Responde ÚNICAMENTE con lo que dice el texto de INFORMACIÓN REAL. "
+                    f"Si dice '1-1', responde '1-1'. Si dice 'empate', di 'empate'. "
+                    f"Copia los datos exactos."
                 )
             })
             continue
