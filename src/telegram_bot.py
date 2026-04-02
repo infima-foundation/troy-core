@@ -26,19 +26,19 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "8703220225")
 
 async def enviar_resumen_diario(bot, chat_id: str):
     try:
-        resumen = "🌅 *Buenos días, Mauricio*\n\n"
+        resumen = "Buenos días, Mauricio\n\n"
         loop = asyncio.get_event_loop()
         eventos = await loop.run_in_executor(None, lambda: obtener_eventos(dias=1))
 
         if eventos:
-            resumen += "📅 *Tu agenda de hoy:*\n"
+            resumen += "Agenda de hoy:\n"
             for e in eventos:
-                resumen += f"• {e['titulo']} — {e['inicio']}\n"
+                resumen += f"- {e['titulo']} — {e['inicio']}\n"
         else:
-            resumen += "📅 No tienes eventos hoy.\n"
+            resumen += "No tienes eventos hoy.\n"
 
-        resumen += "\n¿En qué te puedo ayudar hoy?"
-        await bot.send_message(chat_id=chat_id, text=resumen, parse_mode="Markdown")
+        resumen += "\n¿En qué te puedo ayudar?"
+        await bot.send_message(chat_id=chat_id, text=resumen)
 
     except Exception as e:
         print(f"Error enviando resumen diario: {e}")
@@ -49,30 +49,29 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto_usuario = update.message.text
     sesion_id = str(update.effective_user.id)
 
-    bot = update.get_bot()
-    chat_id = update.effective_chat.id
     loop = asyncio.get_running_loop()
 
-    await update.message.reply_text("🧠 Pensando...")
-
-    # Cada vez que el orquestador emite un pensamiento,
-    # lo enviamos como mensaje de Telegram en tiempo real.
+    # Los pensamientos intermedios del LLM son internos — no llegan al usuario.
     def callback_pensamiento(pensamiento: str):
-        future = asyncio.run_coroutine_threadsafe(
-            bot.send_message(chat_id=chat_id, text=f"💭 {pensamiento}"),
-            loop
-        )
-        future.result(timeout=15)
+        pass
 
-    # El orquestador es blocking — lo corremos en un thread
-    # para no bloquear el event loop de Telegram.
+    # El orquestador es blocking — lo corremos en un thread.
+    tarea = loop.run_in_executor(
+        None,
+        lambda: orquestador.procesar(texto_usuario, sesion_id, callback_pensamiento)
+    )
+
+    # "Pensando..." solo si la tarea tarda más de 2 segundos.
     try:
-        respuesta = await loop.run_in_executor(
-            None,
-            lambda: orquestador.procesar(texto_usuario, sesion_id, callback_pensamiento)
-        )
+        respuesta = await asyncio.wait_for(asyncio.shield(tarea), timeout=2.0)
+    except asyncio.TimeoutError:
+        await update.message.reply_text("Pensando...")
+        try:
+            respuesta = await tarea
+        except Exception as e:
+            respuesta = f"Error en el orquestador: {e}"
     except Exception as e:
-        respuesta = f"❌ Error en el orquestador: {e}"
+        respuesta = f"Error en el orquestador: {e}"
 
     await update.message.reply_text(respuesta)
 
