@@ -8,7 +8,7 @@
 # 3. Persistent Memory — contexto entre conversaciones
 # ─────────────────────────────────────────────────
 
-import sys, os, json
+import sys, os, json, asyncio, traceback
 from datetime import datetime
 from typing import TypedDict, Annotated
 import operator
@@ -29,6 +29,16 @@ MAX_PASOS = 6  # Máximo de herramientas por tarea
 # El LLM lee esto para decidir qué usar.
 # ─────────────────────────────────────────────────
 
+def _run_async_in_thread(coro):
+    """Ejecuta una coroutine en un event loop fresco.
+    Seguro desde cualquier thread — evita conflictos con loops existentes."""
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
+
+
 def _importar_herramientas():
     """Importa herramientas disponibles de forma lazy."""
     tools = {}
@@ -45,7 +55,7 @@ def _importar_herramientas():
         pass
 
     try:
-        from browser_use import navegar, buscar_resultado
+        from browser_use import navegar, buscar_resultado_deportivo as _buscar_deportivo_async
         tools["navegar_url"] = {
             "descripcion": "Abre una URL y extrae su contenido",
             "ejemplo": "navegar_url('https://espn.com')",
@@ -56,7 +66,10 @@ def _importar_herramientas():
             "descripcion": "Busca resultados de partidos deportivos",
             "ejemplo": "buscar_resultado_deportivo('Mexico vs Belgica 2026')",
             "parametros": {"query": "equipos y fecha"},
-            "funcion": lambda p: buscar_resultado(p["query"])
+            # Usamos _run_async_in_thread con la coroutine directamente para evitar
+            # el conflicto de event loop que causa asyncio.run() dentro de un thread
+            # que Playwright ya puede haber inicializado con su propio loop.
+            "funcion": lambda p: _run_async_in_thread(_buscar_deportivo_async(p["query"]))
         }
     except ImportError:
         pass
@@ -326,6 +339,15 @@ def turn_loop(instruccion: str, sesion_id: str,
     callback_pensamiento: función opcional que recibe el pensamiento
     del LLM en tiempo real (para mostrar al usuario qué está haciendo).
     """
+    try:
+        return _turn_loop_interno(instruccion, sesion_id, callback_pensamiento)
+    except Exception as e:
+        traceback.print_exc()
+        return f"Error en el orquestador: {type(e).__name__}: {e}"
+
+
+def _turn_loop_interno(instruccion: str, sesion_id: str,
+                       callback_pensamiento=None) -> str:
     idioma = detectar_idioma(instruccion)
     memoria = Memoria(sesion_id)
 
@@ -417,7 +439,7 @@ def turn_loop(instruccion: str, sesion_id: str,
         # Si llegó aquí sin acción ni respuesta, terminar
         break
 
-    return "No pude completar la tarea. Intenta ser más específico."
+    return f"No pude completar la tarea después de {pasos} pasos. El modelo no devolvió una acción ni respuesta final válida."
 
 
 # ─────────────────────────────────────────────────

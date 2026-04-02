@@ -63,7 +63,7 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # "Pensando..." solo si la tarea tarda más de 2 segundos.
     try:
-        respuesta = await asyncio.wait_for(asyncio.shield(tarea), timeout=2.0)
+        respuesta = await asyncio.wait_for(asyncio.shield(tarea), timeout=5.0)
     except asyncio.TimeoutError:
         await update.message.reply_text("Pensando...")
         try:
