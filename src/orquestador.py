@@ -282,6 +282,8 @@ REGLAS:
 4. Si una herramienta falla, intenta una alternativa o explica el problema.
 5. Máximo {max_pasos} pasos antes de dar una respuesta final.
 6. Responde siempre en {idioma}.
+7. Para preguntas sobre resultados de partidos, marcadores, scores o quién ganó un juego,
+   usa SIEMPRE buscar_resultado_deportivo. NUNCA uses buscar_web para esto.
 """
 
 def detectar_idioma(texto: str) -> str:
