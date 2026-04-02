@@ -292,42 +292,83 @@ class Memoria:
 # El ciclo de razonamiento y ejecución.
 # ─────────────────────────────────────────────────
 
-PROMPT_SISTEMA = """Eres TROY, un agente personal soberano de Infima Foundation.
-Corres completamente en el dispositivo del usuario. Sus datos nunca salen de su control.
+# Palabras que indican que se necesita una herramienta — activan el turn loop completo.
+_PALABRAS_HERRAMIENTA = {
+    "busca", "buscar", "búscame", "encuentra", "agenda", "calendario",
+    "evento", "eventos", "cita", "reunión", "tarea", "tareas",
+    "correo", "email", "gmail", "inbox", "bandeja",
+    "resultado", "marcador", "score", "partido", "juego", "ganó", "perdió",
+    "navega", "abre", "visita", "url", "http", "www",
+    "manda", "mándale", "envía", "dile", "mensaje",
+    "resumen", "documenta", "archivos",
+}
 
-Tu personalidad es directa, cálida y eficiente — como un colaborador de confianza.
 
-HERRAMIENTAS DISPONIBLES:
+def _necesita_herramientas(texto: str) -> bool:
+    palabras = set(texto.lower().split())
+    return bool(palabras & _PALABRAS_HERRAMIENTA)
+
+
+def _parsear_decision(texto: str) -> dict:
+    """Parsea el formato simplificado USAR/PARAMETROS/RESPUESTA del LLM.
+
+    Formatos esperados:
+      USAR: nombre_herramienta
+      PARAMETROS: {"key": "value"}
+
+      RESPUESTA: texto de respuesta al usuario
+    """
+    texto = texto.strip()
+
+    # Caso RESPUESTA
+    if texto.upper().startswith("RESPUESTA:"):
+        return {"respuesta_final": texto[len("RESPUESTA:"):].strip()}
+
+    # Caso USAR + PARAMETROS (puede haber texto extra antes/después)
+    resultado = {}
+    for linea in texto.splitlines():
+        linea = linea.strip()
+        if linea.upper().startswith("USAR:"):
+            resultado["accion"] = linea[5:].strip()
+        elif linea.upper().startswith("PARAMETROS:"):
+            params_str = linea[11:].strip()
+            try:
+                resultado["parametros"] = json.loads(params_str)
+            except json.JSONDecodeError:
+                resultado["parametros"] = {}
+
+    if "accion" in resultado:
+        if "parametros" not in resultado:
+            resultado["parametros"] = {}
+        return resultado
+
+    # Fallback: tratar todo el texto como respuesta directa
+    return {"respuesta_final": texto}
+
+
+PROMPT_SISTEMA = """Eres TROY, agente personal de Infima Foundation. Corres 100% local.
+Tu personalidad: directa, cálida, eficiente.
+
+HERRAMIENTAS:
 {catalogo}
 
-CONTEXTO DEL USUARIO:
+CONTEXTO:
 {contexto}
 
-INSTRUCCIONES DE RAZONAMIENTO:
-Cuando el usuario te pida algo, analiza si necesitas usar herramientas.
+INSTRUCCIONES:
+Si necesitas una herramienta, responde exactamente así (dos líneas):
+USAR: nombre_herramienta
+PARAMETROS: {{"param1": "valor1"}}
 
-Si necesitas usar una herramienta, responde EXACTAMENTE en este formato JSON:
-{{
-  "pensamiento": "explica brevemente qué vas a hacer y por qué",
-  "accion": "nombre_de_la_herramienta",
-  "parametros": {{"param1": "valor1", "param2": "valor2"}}
-}}
-
-Si ya tienes toda la información para responder al usuario, responde EXACTAMENTE en este formato JSON:
-{{
-  "pensamiento": "tengo toda la información necesaria",
-  "respuesta_final": "tu respuesta completa al usuario en {idioma}"
-}}
+Si ya puedes responder, responde exactamente así (una línea):
+RESPUESTA: tu respuesta completa en {idioma}
 
 REGLAS:
-1. Siempre responde en JSON válido, sin texto antes ni después.
-2. Usa herramientas solo cuando sean necesarias.
-3. Nunca inventes datos — si no sabes algo, dilo.
-4. Si una herramienta falla, intenta una alternativa o explica el problema.
-5. Máximo {max_pasos} pasos antes de dar una respuesta final.
-6. Responde siempre en {idioma}.
-7. Para preguntas sobre resultados de partidos, marcadores, scores o quién ganó un juego,
-   usa SIEMPRE buscar_resultado_deportivo. NUNCA uses buscar_web para esto.
+- Nunca inventes datos. Si no sabes, dilo.
+- Para partidos/scores/marcadores usa SIEMPRE buscar_resultado_deportivo, nunca buscar_web.
+- Si una herramienta falla, intenta una alternativa o explica el problema.
+- Máximo {max_pasos} usos de herramientas.
+- Responde siempre en {idioma}.
 """
 
 def detectar_idioma(texto: str) -> str:
@@ -362,6 +403,34 @@ def ejecutar_herramienta(nombre: str, parametros: dict,
         return error, False
 
 
+def _respuesta_directa(instruccion: str, sesion_id: str) -> str:
+    """LLM directo sin turn loop — para saludos y preguntas simples."""
+    idioma = detectar_idioma(instruccion)
+    memoria = Memoria(sesion_id)
+
+    mensajes = [{"role": "system", "content": (
+        f"Eres TROY, un agente personal de Infima Foundation. "
+        f"Responde de forma natural y directa en {idioma}. "
+        f"Usuario: {memoria.perfil_usuario['nombre']}."
+    )}]
+    for msg in memoria.historial_sesion[-4:]:
+        mensajes.append(msg)
+    mensajes.append({"role": "user", "content": instruccion})
+
+    resp = ollama_client.chat(model=MODELO, messages=mensajes,
+                              options={"num_predict": 150, "temperature": 0.7})
+    texto = resp.message.content if hasattr(resp, "message") else resp["message"]["content"]
+
+    try:
+        from memoria import guardar_mensaje
+        guardar_mensaje(sesion_id, "user", instruccion)
+        guardar_mensaje(sesion_id, "assistant", texto)
+    except Exception:
+        pass
+
+    return texto
+
+
 def turn_loop(instruccion: str, sesion_id: str,
               callback_pensamiento=None) -> str:
     """
@@ -394,8 +463,8 @@ def _turn_loop_interno(instruccion: str, sesion_id: str,
         }
     ]
 
-    # Agregar historial de la sesión
-    for msg in memoria.historial_sesion[-6:]:
+    # Historial limitado a 4 mensajes para no contaminar el contexto
+    for msg in memoria.historial_sesion[-4:]:
         mensajes.append(msg)
 
     mensajes.append({"role": "user", "content": instruccion})
@@ -414,29 +483,13 @@ def _turn_loop_interno(instruccion: str, sesion_id: str,
         texto = resp.message.content if hasattr(resp, "message") \
             else resp["message"]["content"]
 
-        # Log para diagnóstico — ver exactamente qué devuelve el LLM
-        print(f"[TROY paso {pasos}] raw LLM output: {repr(texto)}")
+        print(f"[TROY paso {pasos}] raw: {repr(texto)}")
 
-        texto_limpio = _extraer_json(texto)
-
-        try:
-            decision = json.loads(texto_limpio)
-        except json.JSONDecodeError as e:
-            # El LLM no devolvió JSON parseable tras todos los intentos de extracción
-            print(f"[TROY paso {pasos}] JSONDecodeError: {e}")
-            print(f"[TROY paso {pasos}] texto_limpio intentado: {repr(texto_limpio)}")
-            return "No pude procesar la respuesta del modelo. Intenta de nuevo."
-
-        pensamiento = decision.get("pensamiento", "")
-
-        # Notificar al usuario qué está pensando
-        if callback_pensamiento and pensamiento:
-            callback_pensamiento(pensamiento)
+        decision = _parsear_decision(texto)
 
         # ¿Tiene respuesta final?
         if "respuesta_final" in decision:
             respuesta = decision["respuesta_final"]
-            # Guardar en memoria
             try:
                 from memoria import guardar_mensaje
                 guardar_mensaje(sesion_id, "user", instruccion)
@@ -454,16 +507,11 @@ def _turn_loop_interno(instruccion: str, sesion_id: str,
                 herramienta, parametros, memoria
             )
 
-            # Agregar resultado al contexto para el siguiente turno
-            mensajes.append({
-                "role": "assistant",
-                "content": texto_limpio
-            })
+            mensajes.append({"role": "assistant", "content": texto})
             mensajes.append({
                 "role": "user",
                 "content": f"Resultado de {herramienta}: {resultado}"
             })
-
             continue
 
         # Si llegó aquí sin acción ni respuesta, terminar
@@ -478,10 +526,11 @@ def _turn_loop_interno(instruccion: str, sesion_id: str,
 
 def procesar(instruccion: str, sesion_id: str = "default",
              callback_pensamiento=None) -> str:
-    """
-    Punto de entrada principal del orquestador.
-    Reemplaza la lógica de detección de patrones del bot.
-    """
+    """Punto de entrada principal del orquestador."""
+    # Fast path: menos de 15 palabras y sin palabras clave de herramientas
+    # → LLM directo, sin turn loop ni overhead de formato
+    if len(instruccion.split()) < 15 and not _necesita_herramientas(instruccion):
+        return _respuesta_directa(instruccion, sesion_id)
     return turn_loop(instruccion, sesion_id, callback_pensamiento)
 
 
