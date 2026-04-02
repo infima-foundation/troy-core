@@ -18,9 +18,9 @@ from busqueda import buscar_web
 def _generar_variaciones(query: str) -> list[str]:
     anio = datetime.now().year
     return [
-        query,
-        f"{query} {anio}",
-        f"últimas noticias {query}",
+        f"{query} resultado final",
+        f"{query} marcador final {anio}",
+        f"{query} terminó",
     ]
 
 

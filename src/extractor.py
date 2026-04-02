@@ -26,6 +26,13 @@ _CONTEXTO_RESULTADO = {
     "derrota", "victoria", "goles",
 }
 
+# Palabras que indican preview/anuncio — ignorar esas líneas
+_PALABRAS_PREVIEW = {
+    "en vivo", "en directo", "se jugará", "se juega", "mañana",
+    "previo", "preview", "previa", "por jugar", "próximo", "próxima",
+    "anuncio", "convocatoria", "alineación", "formación",
+}
+
 # Palabras que activan el extractor (contexto deportivo en la query)
 _PALABRAS_PARTIDO = {
     "vs", "contra", "partido", "juego", "marcador", "resultado",
@@ -80,6 +87,11 @@ def _extraer_marcador(texto: str, query: str) -> str | None:
     for i, linea in enumerate(lineas):
         m = _RE_SCORE.search(linea)
         if not m:
+            continue
+
+        # Ignorar líneas de preview/anuncio
+        linea_lower_check = linea.lower()
+        if any(p in linea_lower_check for p in _PALABRAS_PREVIEW):
             continue
 
         if m.group(1) is not None:
