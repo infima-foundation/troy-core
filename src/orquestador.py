@@ -90,12 +90,18 @@ def _importar_herramientas():
         pass
 
     try:
-        from browser_use import navegar
+        from browser_use import navegar, buscar_resultado_deportivo as _buscar_deportivo_async
         tools["navegar_url"] = {
             "descripcion": "Abre una URL y extrae su contenido",
             "ejemplo": "navegar_url('https://espn.com')",
             "parametros": {"url": "URL a visitar"},
             "funcion": lambda p: navegar(p["url"])
+        }
+        tools["buscar_resultado_deportivo"] = {
+            "descripcion": "Busca resultados de partidos deportivos via Google — más confiable que DuckDuckGo para scores recientes",
+            "ejemplo": "buscar_resultado_deportivo('Mexico vs Belgica 2026')",
+            "parametros": {"query": "equipos y fecha del partido"},
+            "funcion": lambda p: _run_async_in_thread(_buscar_deportivo_async(p["query"]))
         }
     except ImportError:
         pass
@@ -306,6 +312,12 @@ def _es_saludo_puro(texto: str) -> bool:
     return normalizado in _SALUDOS_PUROS
 
 
+def _contiene_formato_interno(texto: str) -> bool:
+    """True si el texto contiene el formato interno del agente (nunca debe llegar al usuario)."""
+    t = texto.upper()
+    return "USAR:" in t or "PARAMETROS:" in t
+
+
 def _parsear_decision(texto: str) -> dict:
     """Parsea la respuesta del LLM. Soporta tres formatos:
 
@@ -318,14 +330,21 @@ def _parsear_decision(texto: str) -> dict:
            buscar_resultado_deportivo("Mexico vs Belgica 2026")
 
       3. Texto libre → respuesta directa al usuario.
+
+    INVARIANTE: si el texto contiene 'USAR:' o 'PARAMETROS:', nunca
+    se devuelve como respuesta_final — siempre se trata como acción.
     """
     texto = texto.strip()
 
-    # Caso RESPUESTA
+    # Caso RESPUESTA — solo si el contenido no tiene formato interno
     if texto.upper().startswith("RESPUESTA:"):
-        return {"respuesta_final": texto[len("RESPUESTA:"):].strip()}
+        respuesta = texto[len("RESPUESTA:"):].strip()
+        if _contiene_formato_interno(respuesta):
+            # El LLM metió una acción dentro de RESPUESTA: — re-parsear
+            return _parsear_decision(respuesta)
+        return {"respuesta_final": respuesta}
 
-    # Caso USAR + PARAMETROS (puede haber texto extra antes/después)
+    # Caso USAR + PARAMETROS — buscar en líneas individuales
     resultado = {}
     for linea in texto.splitlines():
         linea = linea.strip()
@@ -339,24 +358,39 @@ def _parsear_decision(texto: str) -> dict:
                 resultado["parametros"] = {}
 
     if "accion" in resultado:
-        if "parametros" not in resultado:
-            resultado["parametros"] = {}
+        resultado.setdefault("parametros", {})
         return resultado
 
-    # Caso: llamada a función en texto plano — nombre_herramienta("arg") o nombre('arg')
+    # USAR: embebido en medio de texto (no al inicio de línea)
+    usar_match = re.search(r'USAR:\s*(\w+)', texto, re.IGNORECASE)
+    if usar_match:
+        nombre = usar_match.group(1)
+        if nombre in HERRAMIENTAS:
+            params = {}
+            param_match = re.search(r'PARAMETROS:\s*(\{[^}]+\})', texto, re.IGNORECASE | re.DOTALL)
+            if param_match:
+                try:
+                    params = json.loads(param_match.group(1))
+                except json.JSONDecodeError:
+                    pass
+            return {"accion": nombre, "parametros": params}
+
+    # Llamada a función en texto plano — nombre_herramienta("arg")
     fn_match = re.search(r'\b(\w+)\s*\(\s*([^)]*)\s*\)', texto)
     if fn_match:
         nombre = fn_match.group(1)
         if nombre in HERRAMIENTAS:
             args_raw = fn_match.group(2).strip()
-            # Extraer el valor del primer argumento (con o sin comillas)
             arg_match = re.search(r'["\'](.+?)["\']', args_raw)
             arg_val = arg_match.group(1) if arg_match else args_raw
-            # Mapear al primer parámetro declarado en el registry
             primer_param = next(iter(HERRAMIENTAS[nombre]["parametros"]), "query")
             return {"accion": nombre, "parametros": {primer_param: arg_val}}
 
-    # Fallback: tratar todo el texto como respuesta directa
+    # Guardia final: si el texto libre contiene formato interno, no mandarlo al usuario
+    if _contiene_formato_interno(texto):
+        print(f"[TROY] formato interno detectado en fallback — descartando: {repr(texto[:120])}")
+        return {}  # ni acción ni respuesta → turn loop usará ultimo_resultado
+
     return {"respuesta_final": texto}
 
 
@@ -378,10 +412,9 @@ Si ya puedes responder, responde exactamente así (una línea):
 RESPUESTA: tu respuesta completa en {idioma}
 
 REGLAS:
-- Tienes acceso a internet en tiempo real via buscar_web. Para CUALQUIER pregunta sobre
-  datos actuales — noticias, deportes, precios, recetas, personas, eventos, lugares,
-  resultados de partidos — usa buscar_web de inmediato. NUNCA digas que no tienes
-  acceso a internet o información actualizada.
+- Tienes acceso a internet en tiempo real. NUNCA digas que no tienes información actualizada.
+- Para resultados de partidos, scores o marcadores: usa buscar_resultado_deportivo.
+- Para todo lo demás (noticias, precios, recetas, personas, eventos, lugares): usa buscar_web.
 - TROY actúa. No pidas autorización al usuario antes de usar herramientas.
 - Nunca inventes datos. Si no encuentras algo con las herramientas, dilo.
 - Si una herramienta falla, intenta una alternativa o explica el problema.
