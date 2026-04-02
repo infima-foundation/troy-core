@@ -81,19 +81,16 @@ def _extraer_marcador(texto: str, query: str) -> str | None:
         m = _RE_SCORE.search(linea)
         if not m:
             continue
-        linea_lower = linea.lower()
 
-        # Extraer los dos números del score
         if m.group(1) is not None:
             g1, g2 = int(m.group(1)), int(m.group(2))
         else:
             g1, g2 = int(m.group(3)), int(m.group(4))
 
-        # Puntuar por presencia de equipos y palabras de contexto
+        linea_lower = linea.lower()
         pts = sum(1 for e in equipos if e in linea_lower)
         pts += sum(1 for p in _CONTEXTO_RESULTADO if p in linea_lower)
 
-        # Ampliar contexto: buscar en ±2 líneas adyacentes
         ventana = "\n".join(lineas[max(0, i-2):i+3]).lower()
         pts += sum(1 for e in equipos if e in ventana) // 2
         pts += sum(1 for p in _CONTEXTO_RESULTADO if p in ventana) // 2
@@ -128,17 +125,14 @@ def _extraer_marcador(texto: str, query: str) -> str | None:
         partes.append(sede)
 
     respuesta = " — ".join(partes)
-    print(f"[EXTRACTOR] {respuesta}")
+    print(f"[EXTRACTOR] resultado: {respuesta}")
     return respuesta
 
 
 def _tipo_resultado(g1: int, g2: int, equipos: list[str]) -> str:
     if g1 == g2:
         return "empate"
-    ganador_idx = 0 if g1 > g2 else 1
-    if len(equipos) > ganador_idx:
-        return f"victoria de {equipos[ganador_idx].capitalize()}"
-    return "victoria local" if g1 > g2 else "victoria visitante"
+    return "victoria"
 
 
 def _buscar_fecha(texto: str) -> str | None:
@@ -165,22 +159,46 @@ def _buscar_sede(texto: str) -> str | None:
     return None
 
 
+_STOPWORDS_QUERY = {
+    "resultado", "partido", "juego", "marcador", "score", "amistoso",
+    "quién", "quien", "ganó", "gano", "cómo", "como", "quedó", "quedo",
+    "cuánto", "cuanto", "2024", "2025", "2026", "hoy", "ayer", "final",
+    "cuanto", "quedo", "termino", "terminó",
+}
+
+
+def _limpiar_palabra(p: str) -> str:
+    """Quita signos de puntuación pegados a la palabra."""
+    return re.sub(r'^[¿¡\'"()\[\]]+|[?!\'".,()\[\]]+$', '', p)
+
+
 def _nombre_partido(query: str, equipos: list[str]) -> str:
-    # Reconstruir "Equipo1 vs Equipo2" desde la query original
-    vs_match = re.search(r'(.+?)\s+vs\.?\s+(.+?)(?:\s+\d{4})?$', query.strip())
+    vs_match = re.search(r'\bvs\.?\b', query)
     if vs_match:
-        e1 = vs_match.group(1).strip().title()
-        e2 = vs_match.group(2).strip().title()
-        return f"{e1} vs {e2}"
+        antes = query[:vs_match.start()]
+        despues = re.sub(r'\d{4}', '', query[vs_match.end():])
+        e1 = " ".join(
+            _limpiar_palabra(w).capitalize()
+            for w in antes.split()
+            if _limpiar_palabra(w).lower() not in _STOPWORDS_QUERY
+            and len(_limpiar_palabra(w)) >= 3
+        ).strip()
+        e2 = " ".join(
+            _limpiar_palabra(w).capitalize()
+            for w in despues.split()
+            if _limpiar_palabra(w).lower() not in _STOPWORDS_QUERY
+            and len(_limpiar_palabra(w)) >= 3
+        ).strip()
+        if e1 and e2:
+            return f"{e1} vs {e2}"
     if len(equipos) >= 2:
         return f"{equipos[0].capitalize()} vs {equipos[1].capitalize()}"
     return "Partido"
 
 
 def _extraer_equipos(query: str) -> list[str]:
-    stopwords = {
-        "resultado", "partido", "juego", "marcador", "score", "amistoso",
-        "quién", "quien", "ganó", "gano", "cómo", "como", "quedó", "quedo",
-        "cuánto", "cuanto", "2024", "2025", "2026", "hoy", "ayer", "final",
-    }
-    return [p for p in query.split() if len(p) >= 4 and p not in stopwords]
+    return [
+        _limpiar_palabra(p) for p in query.split()
+        if len(_limpiar_palabra(p)) >= 4
+        and _limpiar_palabra(p).lower() not in _STOPWORDS_QUERY
+    ]
