@@ -8,7 +8,7 @@
 # 3. Persistent Memory — contexto entre conversaciones
 # ─────────────────────────────────────────────────
 
-import sys, os, json, asyncio, traceback
+import sys, os, json, asyncio, traceback, re
 from datetime import datetime
 from typing import TypedDict, Annotated
 import operator
@@ -28,6 +28,37 @@ MAX_PASOS = 6  # Máximo de herramientas por tarea
 # Catálogo de herramientas disponibles.
 # El LLM lee esto para decidir qué usar.
 # ─────────────────────────────────────────────────
+
+def _extraer_json(texto: str) -> str:
+    """Extrae el primer objeto JSON del texto del LLM.
+
+    Cubre los casos que produce llama3.2:
+      1. ```json ... ```  o  ``` ... ```
+      2. JSON limpio desde el inicio
+      3. JSON embebido con texto antes y/o después
+    """
+    texto = texto.strip()
+
+    # Caso 1: bloque de código con backticks
+    if "```" in texto:
+        for bloque in texto.split("```"):
+            bloque = bloque.strip()
+            if bloque.startswith("json"):
+                bloque = bloque[4:].strip()
+            if bloque.startswith("{"):
+                return bloque
+
+    # Caso 2: JSON directo sin preámbulo
+    if texto.startswith("{"):
+        return texto
+
+    # Caso 3: JSON embebido — extraer desde el primer { hasta el último }
+    match = re.search(r'\{.*\}', texto, re.DOTALL)
+    if match:
+        return match.group(0)
+
+    return texto
+
 
 def _run_async_in_thread(coro):
     """Ejecuta una coroutine en un event loop fresco.
@@ -383,19 +414,18 @@ def _turn_loop_interno(instruccion: str, sesion_id: str,
         texto = resp.message.content if hasattr(resp, "message") \
             else resp["message"]["content"]
 
-        # Limpiar y parsear JSON
-        texto_limpio = texto.strip()
-        if texto_limpio.startswith("```"):
-            texto_limpio = texto_limpio.split("```")[1]
-            if texto_limpio.startswith("json"):
-                texto_limpio = texto_limpio[4:]
-        texto_limpio = texto_limpio.strip()
+        # Log para diagnóstico — ver exactamente qué devuelve el LLM
+        print(f"[TROY paso {pasos}] raw LLM output: {repr(texto)}")
+
+        texto_limpio = _extraer_json(texto)
 
         try:
             decision = json.loads(texto_limpio)
-        except json.JSONDecodeError:
-            # Si no es JSON válido, tratar como respuesta final
-            return texto.strip()
+        except json.JSONDecodeError as e:
+            # El LLM no devolvió JSON parseable tras todos los intentos de extracción
+            print(f"[TROY paso {pasos}] JSONDecodeError: {e}")
+            print(f"[TROY paso {pasos}] texto_limpio intentado: {repr(texto_limpio)}")
+            return "No pude procesar la respuesta del modelo. Intenta de nuevo."
 
         pensamiento = decision.get("pensamiento", "")
 
