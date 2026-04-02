@@ -506,6 +506,7 @@ def ejecutar_herramienta(nombre: str, parametros: dict,
         else:
             resultado_str = str(resultado)[:500]
 
+        print(f"[TROY resultado COMPLETO] {resultado_str}")
         memoria.registrar_accion(nombre, parametros, resultado_str, True)
         return resultado_str, True
 
