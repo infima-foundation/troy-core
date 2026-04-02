@@ -542,27 +542,37 @@ def _ejecutar_y_redactar(instruccion: str, sesion_id: str,
                           herramienta: str, query: str) -> str:
     """Ejecuta una herramienta directamente y usa el LLM solo para redactar la respuesta.
 
-    El LLM no decide herramientas — solo convierte el resultado en lenguaje natural.
+    Para buscar_reciente usa búsqueda multi-fuente en paralelo.
+    El LLM no decide herramientas — solo sintetiza el resultado en lenguaje natural.
     """
     idioma = detectar_idioma(instruccion)
     memoria = Memoria(sesion_id)
 
-    resultado, exitosa = ejecutar_herramienta(herramienta, {"query": query}, memoria)
+    if herramienta == "buscar_reciente":
+        try:
+            from busqueda_paralela import buscar_multifuente
+            resultado = buscar_multifuente(query)
+            exitosa = bool(resultado.strip())
+        except Exception as e:
+            print(f"[TROY] buscar_multifuente falló ({e}), usando búsqueda simple")
+            resultado, exitosa = ejecutar_herramienta(herramienta, {"query": query}, memoria)
+    else:
+        resultado, exitosa = ejecutar_herramienta(herramienta, {"query": query}, memoria)
 
     if not exitosa or not resultado.strip():
-        # Si la herramienta falló, responder directamente sin mencionar la búsqueda
         return _respuesta_directa(instruccion, sesion_id)
 
     mensajes = [
         {"role": "system", "content": (
             f"Eres TROY, agente personal de Infima Foundation. "
             f"Responde en {idioma} de forma directa y concisa. "
-            f"Usa los resultados de búsqueda para responder la pregunta. "
-            f"No menciones que hiciste una búsqueda ni cites fuentes a menos que sea relevante."
+            f"Aquí hay información de múltiples fuentes sobre la pregunta del usuario. "
+            f"Sintetiza una respuesta precisa y directa usando solo los datos que aparecen en las fuentes. "
+            f"Si hay contradicciones entre fuentes, usa el dato que más se repite."
         )},
         {"role": "user", "content": (
             f"Pregunta: {instruccion}\n\n"
-            f"Resultados:\n{resultado}"
+            f"Fuentes:\n{resultado}"
         )}
     ]
 
