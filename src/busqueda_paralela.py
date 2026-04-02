@@ -9,9 +9,10 @@
 import asyncio
 import sys, os
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 sys.path.insert(0, os.path.dirname(__file__))
 
-from browser_use import buscar_reciente
+from busqueda import buscar_web
 
 
 def _generar_variaciones(query: str) -> list[str]:
@@ -47,16 +48,17 @@ def _deduplicar(textos: list[str]) -> str:
 async def _buscar_multifuente_async(query: str) -> str:
     variaciones = _generar_variaciones(query)
 
+    async def _una_busqueda(variacion: str, delay: float) -> str:
+        # Delay escalonado para evitar rate-limiting de DuckDuckGo
+        await asyncio.sleep(delay)
+        return await asyncio.to_thread(buscar_web, variacion)
+
     resultados = await asyncio.gather(
-        *[buscar_reciente(v) for v in variaciones],
+        *[_una_busqueda(v, i * 1.0) for i, v in enumerate(variaciones)],
         return_exceptions=True
     )
 
-    textos = [
-        r for r in resultados
-        if isinstance(r, str) and r.strip()
-    ]
-
+    textos = [r for r in resultados if isinstance(r, str) and r.strip()]
     combinado = _deduplicar(textos)
     return combinado[:3000]
 
@@ -64,7 +66,8 @@ async def _buscar_multifuente_async(query: str) -> str:
 def buscar_multifuente(query: str) -> str:
     """Busca en 3 variaciones de la query en paralelo y consolida resultados.
 
-    Usa Google/Playwright. Devuelve máximo 3000 caracteres deduplicados.
+    Usa DuckDuckGo via asyncio.to_thread con delays escalonados.
+    Devuelve máximo 3000 caracteres deduplicados.
     """
     loop = asyncio.new_event_loop()
     try:
